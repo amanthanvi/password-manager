@@ -1,0 +1,32 @@
+appId: com.npw.passwordmanager
+productName: npw
+
+directories:
+  output: dist-packages
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - native/**/*
+  - package.json
+
+asar: true
+asarUnpack:
+  - native/**/*
+
+npmRebuild: false
+
+publish: never
+
+mac:
+  target:
+    - dmg
+
+win:
+  target:
+    - nsis
+
+linux:
+  target:
+    - AppImage
+    - deb
