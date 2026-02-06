@@ -11,6 +11,8 @@ use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroize;
 
+use crate::secure_memory::MemoryLock;
+
 const MAGIC: &[u8; 4] = b"NPW1";
 const FORMAT_VERSION: u16 = 1;
 const HEADER_FLAGS: u16 = 0;
@@ -108,19 +110,35 @@ pub struct EnvelopePlaintext {
     pub reserved: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct UnlockedVault {
     pub header: VaultHeader,
-    pub envelope: EnvelopePlaintext,
+    pub envelope: Box<EnvelopePlaintext>,
     pub payload_plaintext: Vec<u8>,
+    mlock_vault_key: MemoryLock,
+    mlock_payload_plaintext: MemoryLock,
+}
+
+impl Drop for UnlockedVault {
+    fn drop(&mut self) {
+        self.payload_plaintext.zeroize();
+        self.envelope.vault_key.zeroize();
+
+        // Release memory locks after wiping.
+        self.mlock_payload_plaintext.unlock();
+        self.mlock_vault_key.unlock();
+    }
 }
 
 #[derive(Debug)]
 pub struct UnlockedVaultWithKek {
     pub header: VaultHeader,
-    pub envelope: EnvelopePlaintext,
+    pub envelope: Box<EnvelopePlaintext>,
     pub payload_plaintext: Vec<u8>,
-    kek: [u8; KEY_LEN],
+    kek: Box<[u8; KEY_LEN]>,
+    mlock_vault_key: MemoryLock,
+    mlock_payload_plaintext: MemoryLock,
+    mlock_kek: MemoryLock,
 }
 
 impl UnlockedVaultWithKek {
@@ -128,13 +146,29 @@ impl UnlockedVaultWithKek {
     pub fn kek(&self) -> &[u8; KEY_LEN] {
         &self.kek
     }
+
+    pub fn wipe_secrets(&mut self) {
+        self.payload_plaintext.zeroize();
+        self.payload_plaintext.clear();
+        self.envelope.vault_key.zeroize();
+        self.kek.zeroize();
+
+        self.mlock_payload_plaintext.unlock();
+        self.mlock_vault_key.unlock();
+        self.mlock_kek.unlock();
+    }
 }
 
 impl Drop for UnlockedVaultWithKek {
     fn drop(&mut self) {
-        self.kek.zeroize();
-        self.envelope.vault_key.zeroize();
         self.payload_plaintext.zeroize();
+
+        self.envelope.vault_key.zeroize();
+        self.kek.zeroize();
+
+        self.mlock_payload_plaintext.unlock();
+        self.mlock_vault_key.unlock();
+        self.mlock_kek.unlock();
     }
 }
 
@@ -333,21 +367,41 @@ pub fn unlock_vault_file(
         &parsed.header.salt,
         parsed.header.kdf_params,
     )?;
+    let _mlock_kdf_key = MemoryLock::new("kdf_key", kdf_key.as_ptr(), kdf_key.len());
     let mut kek = derive_hkdf(&kdf_key, b"NPW:v1:KEK")?;
+    let _mlock_kek = MemoryLock::new("kek", kek.as_ptr(), kek.len());
     let mut envelope_plaintext = decrypt(
         &kek,
         &parsed.env_nonce,
         parsed.env_ciphertext,
         parsed.env_aad,
     )?;
+    let _mlock_envelope_plaintext = MemoryLock::new(
+        "envelope_plaintext",
+        envelope_plaintext.as_ptr(),
+        envelope_plaintext.len(),
+    );
     let envelope: EnvelopePlaintext = from_cbor(&envelope_plaintext)?;
+    let envelope = Box::new(envelope);
+    let mlock_vault_key = MemoryLock::new(
+        "vault_key",
+        envelope.vault_key.as_ptr(),
+        envelope.vault_key.len(),
+    );
     let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
+    let _mlock_payload_key =
+        MemoryLock::new("payload_key", payload_key.as_ptr(), payload_key.len());
     let payload_plaintext = decrypt(
         &payload_key,
         &parsed.payload_nonce,
         parsed.payload_ciphertext,
         parsed.payload_aad,
     )?;
+    let mlock_payload_plaintext = MemoryLock::new(
+        "payload_plaintext",
+        payload_plaintext.as_ptr(),
+        payload_plaintext.len(),
+    );
 
     kdf_key.zeroize();
     kek.zeroize();
@@ -358,6 +412,8 @@ pub fn unlock_vault_file(
         header: parsed.header,
         envelope,
         payload_plaintext,
+        mlock_vault_key,
+        mlock_payload_plaintext,
     })
 }
 
@@ -372,10 +428,14 @@ pub fn unlock_vault_file_with_kek(
         &parsed.header.salt,
         parsed.header.kdf_params,
     )?;
+    let _mlock_kdf_key = MemoryLock::new("kdf_key", kdf_key.as_ptr(), kdf_key.len());
     let mut kek = derive_hkdf(&kdf_key, b"NPW:v1:KEK")?;
+    let mut kek_box = Box::new(kek);
+    let mlock_kek = MemoryLock::new("kek", kek_box.as_ptr(), kek_box.len());
+    kek.zeroize();
 
     let mut envelope_plaintext = match decrypt(
-        &kek,
+        kek_box.as_ref(),
         &parsed.env_nonce,
         parsed.env_ciphertext,
         parsed.env_aad,
@@ -383,21 +443,34 @@ pub fn unlock_vault_file_with_kek(
         Ok(value) => value,
         Err(error) => {
             kdf_key.zeroize();
-            kek.zeroize();
+            kek_box.zeroize();
             return Err(error);
         }
     };
+    let _mlock_envelope_plaintext = MemoryLock::new(
+        "envelope_plaintext",
+        envelope_plaintext.as_ptr(),
+        envelope_plaintext.len(),
+    );
 
     let envelope: EnvelopePlaintext = match from_cbor(&envelope_plaintext) {
         Ok(value) => value,
         Err(error) => {
             kdf_key.zeroize();
-            kek.zeroize();
+            kek_box.zeroize();
             envelope_plaintext.zeroize();
             return Err(error);
         }
     };
+    let envelope = Box::new(envelope);
+    let mlock_vault_key = MemoryLock::new(
+        "vault_key",
+        envelope.vault_key.as_ptr(),
+        envelope.vault_key.len(),
+    );
     let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
+    let _mlock_payload_key =
+        MemoryLock::new("payload_key", payload_key.as_ptr(), payload_key.len());
     let payload_plaintext = match decrypt(
         &payload_key,
         &parsed.payload_nonce,
@@ -407,12 +480,17 @@ pub fn unlock_vault_file_with_kek(
         Ok(value) => value,
         Err(error) => {
             kdf_key.zeroize();
-            kek.zeroize();
+            kek_box.zeroize();
             payload_key.zeroize();
             envelope_plaintext.zeroize();
             return Err(error);
         }
     };
+    let mlock_payload_plaintext = MemoryLock::new(
+        "payload_plaintext",
+        payload_plaintext.as_ptr(),
+        payload_plaintext.len(),
+    );
 
     kdf_key.zeroize();
     payload_key.zeroize();
@@ -422,7 +500,10 @@ pub fn unlock_vault_file_with_kek(
         header: parsed.header,
         envelope,
         payload_plaintext,
-        kek,
+        kek: kek_box,
+        mlock_vault_key,
+        mlock_payload_plaintext,
+        mlock_kek,
     })
 }
 
@@ -432,12 +513,19 @@ pub fn unlock_vault_file_with_existing_kek(
 ) -> Result<UnlockedVaultWithKek, VaultError> {
     let parsed = parse_vault(vault_bytes)?;
 
+    let kek_box = Box::new(*kek);
+    let mlock_kek = MemoryLock::new("kek", kek_box.as_ptr(), kek_box.len());
     let mut envelope_plaintext = decrypt(
-        kek,
+        kek_box.as_ref(),
         &parsed.env_nonce,
         parsed.env_ciphertext,
         parsed.env_aad,
     )?;
+    let _mlock_envelope_plaintext = MemoryLock::new(
+        "envelope_plaintext",
+        envelope_plaintext.as_ptr(),
+        envelope_plaintext.len(),
+    );
     let envelope: EnvelopePlaintext = match from_cbor(&envelope_plaintext) {
         Ok(value) => value,
         Err(error) => {
@@ -446,7 +534,15 @@ pub fn unlock_vault_file_with_existing_kek(
         }
     };
 
+    let envelope = Box::new(envelope);
+    let mlock_vault_key = MemoryLock::new(
+        "vault_key",
+        envelope.vault_key.as_ptr(),
+        envelope.vault_key.len(),
+    );
     let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
+    let _mlock_payload_key =
+        MemoryLock::new("payload_key", payload_key.as_ptr(), payload_key.len());
     let payload_plaintext = match decrypt(
         &payload_key,
         &parsed.payload_nonce,
@@ -460,6 +556,11 @@ pub fn unlock_vault_file_with_existing_kek(
             return Err(error);
         }
     };
+    let mlock_payload_plaintext = MemoryLock::new(
+        "payload_plaintext",
+        payload_plaintext.as_ptr(),
+        payload_plaintext.len(),
+    );
 
     payload_key.zeroize();
     envelope_plaintext.zeroize();
@@ -468,7 +569,10 @@ pub fn unlock_vault_file_with_existing_kek(
         header: parsed.header,
         envelope,
         payload_plaintext,
-        kek: *kek,
+        kek: kek_box,
+        mlock_vault_key,
+        mlock_payload_plaintext,
+        mlock_kek,
     })
 }
 
@@ -820,6 +924,7 @@ impl<'a> Reader<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::secure_memory::ForceMlockFailGuard;
     use serde::{Deserialize, Serialize};
 
     use super::{
@@ -938,6 +1043,25 @@ mod tests {
         let result = unlock_vault_file(&file, "correct horse battery staple");
 
         assert!(matches!(result, Err(VaultError::AuthFailed)));
+    }
+
+    #[test]
+    fn unlock_continues_if_mlock_fails() {
+        let _guard = ForceMlockFailGuard::enable();
+        let payload = payload_bytes();
+        let file = create_vault_file(&CreateVaultInput {
+            master_password: "correct horse battery staple",
+            payload_plaintext: &payload,
+            item_count: 1,
+            vault_label: Some("Personal"),
+            kdf_params: KdfParams::default(),
+        })
+        .expect("vault creation should succeed");
+
+        let unlocked = unlock_vault_file(&file, "correct horse battery staple")
+            .expect("unlock should succeed");
+        assert!(!unlocked.mlock_payload_plaintext.is_locked());
+        assert!(!unlocked.mlock_vault_key.is_locked());
     }
 
     fn payload_bytes() -> Vec<u8> {

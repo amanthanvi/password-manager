@@ -2767,8 +2767,9 @@ fn decode_encrypted_totp_qr_payload(payload: &str, password: &str) -> Result<Str
     let bytes = BASE64URL_NOPAD
         .decode(encoded.as_bytes())
         .map_err(|_| CliError::usage("invalid encrypted QR encoding"))?;
-    let unlocked = unlock_vault_file(&bytes, password).map_err(map_vault_error)?;
-    String::from_utf8(unlocked.payload_plaintext).map_err(|_| CliError {
+    let mut unlocked = unlock_vault_file(&bytes, password).map_err(map_vault_error)?;
+    let payload_plaintext = std::mem::take(&mut unlocked.payload_plaintext);
+    String::from_utf8(payload_plaintext).map_err(|_| CliError {
         code: CliExitCode::CorruptOrParse,
         kind: "qr_payload_decode_failed",
         message: "QR payload is not valid UTF-8".to_owned(),
@@ -3112,7 +3113,7 @@ fn load_vault_payload(
     let path = resolve_vault_path(cli, config, command_path)?;
     let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let password = read_master_password(cli.non_interactive, false)?;
-    let unlocked = match unlock_vault_file(&vault_bytes, &password) {
+    let mut unlocked = match unlock_vault_file(&vault_bytes, &password) {
         Ok(unlocked) => {
             audit_event(
                 "vault_unlock_success",
@@ -3135,6 +3136,11 @@ fn load_vault_payload(
         }
     };
     let payload = VaultPayload::from_cbor(&unlocked.payload_plaintext).map_err(map_model_error)?;
+    unlocked
+        .payload_plaintext
+        .iter_mut()
+        .for_each(|value| *value = 0);
+    unlocked.payload_plaintext.clear();
     Ok((path, password, unlocked, payload))
 }
 

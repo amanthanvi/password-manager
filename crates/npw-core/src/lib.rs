@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 pub mod model;
 pub mod password;
+mod secure_memory;
 pub mod totp;
 pub mod vault;
 

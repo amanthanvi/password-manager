@@ -88,7 +88,7 @@ pub fn vault_check(path: String, master_password: String) -> Result<VaultStatus>
         .map_err(|error| error_to_napi(error.to_string()))?;
     Ok(VaultStatus {
         path,
-        label: unlocked.header.vault_label,
+        label: unlocked.header.vault_label.clone(),
         item_count: unlocked.header.item_count,
         kdf_memory_kib: unlocked.header.kdf_params.memory_kib,
         kdf_iterations: unlocked.header.kdf_params.iterations,
@@ -1559,8 +1559,7 @@ impl VaultSession {
     #[napi]
     pub fn lock(&mut self) {
         self.payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now());
-        self.unlocked.payload_plaintext.zeroize();
-        self.unlocked.payload_plaintext.clear();
+        self.unlocked.wipe_secrets();
         self.lock = None;
     }
 }
