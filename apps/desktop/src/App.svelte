@@ -1949,21 +1949,25 @@
                       <button class="row" type="button" on:click={() => selectItem(item)}>
                         <strong>{item.title}</strong>
                         <span class="meta">
-                          <span class="type-badge">{item.itemType}</span>
+                          <span class="type-badge" data-type={item.itemType}>
+                            {item.itemType === 'passkey_ref' ? 'passkey' : item.itemType}
+                          </span>
                           {#if item.favorite}
-                            · ★
+                            <span class="fav-star" aria-label="Favorite">★</span>
                           {/if}
                           {#if item.subtitle}
-                            · {item.subtitle}
+                            <span class="meta-text">{item.subtitle}</span>
                           {/if}
                           {#if item.url}
-                            · {item.url}
+                            <span class="meta-text">{item.url}</span>
                           {/if}
                           {#if item.tags && item.tags.length > 0}
-                            · {item.tags.slice(0, 3).join(', ')}
+                            {#each item.tags.slice(0, 3) as tag (tag)}
+                              <span class="tag-chip">{tag}</span>
+                            {/each}
                           {/if}
                           {#if item.hasTotp}
-                            · TOTP
+                            <span class="totp-pill">2FA</span>
                           {/if}
                         </span>
                       </button>
@@ -2751,7 +2755,7 @@
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: 0.4rem 0.5rem;
   }
 
   .chip {
@@ -2777,6 +2781,12 @@
     border-color: rgba(180, 83, 9, 0.35);
     background: rgba(180, 83, 9, 0.12);
     color: rgba(120, 53, 15, 0.95);
+  }
+
+  .chip[data-tone='neutral'] {
+    border-color: rgba(11, 27, 38, 0.16);
+    background: rgba(11, 27, 38, 0.05);
+    color: var(--ink-2);
   }
 
   .layout {
@@ -3398,14 +3408,26 @@
   }
 
   .filters {
-    display: grid;
-    gap: 0.65rem;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
     align-items: end;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+
+  .filters label {
+    flex: 0 1 auto;
+    min-width: 0;
   }
 
   .filters .inline {
-    grid-column: 1 / -1;
+    align-self: end;
+    padding-bottom: 0.15rem;
+  }
+
+  .filters select,
+  .filters input[list] {
+    padding: 0.45rem 0.6rem;
+    font-size: 0.85rem;
   }
 
   .items ul {
@@ -3423,12 +3445,12 @@
   .row {
     width: 100%;
     text-align: left;
-    border: 1px solid rgba(11, 27, 38, 0.12);
+    border: 1px solid rgba(11, 27, 38, 0.1);
     border-radius: var(--radius-md);
-    padding: 0.7rem 0.8rem;
+    padding: 0.55rem 0.75rem;
     background: rgba(255, 255, 255, 0.6);
     color: inherit;
-    box-shadow: 0 1px 0 rgba(11, 27, 38, 0.05);
+    box-shadow: none;
     transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
   }
 
@@ -3446,10 +3468,13 @@
   }
 
   .meta {
-    display: block;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.45rem;
     font-size: 0.85rem;
     color: var(--ink-3);
-    margin-top: 0.2rem;
+    margin-top: 0.25rem;
   }
 
   .type-badge {
@@ -3459,9 +3484,52 @@
     font-size: 0.75rem;
     font-weight: 650;
     letter-spacing: 0.02em;
+  }
+
+  .type-badge[data-type='login'] {
     background: rgba(11, 114, 133, 0.1);
     color: var(--accent);
-    margin-right: 0.35rem;
+  }
+
+  .type-badge[data-type='note'] {
+    background: rgba(180, 83, 9, 0.1);
+    color: rgba(120, 53, 15, 0.95);
+  }
+
+  .type-badge[data-type='passkey_ref'] {
+    background: rgba(4, 55, 66, 0.1);
+    color: var(--accent-ink);
+  }
+
+  .fav-star {
+    color: rgba(180, 83, 9, 0.85);
+    font-size: 0.95rem;
+    margin-left: 0.1rem;
+    vertical-align: baseline;
+  }
+
+  .tag-chip {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(11, 27, 38, 0.06);
+    color: var(--ink-3);
+    vertical-align: middle;
+  }
+
+  .totp-pill {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: rgba(6, 118, 71, 0.1);
+    color: var(--success);
+    vertical-align: middle;
+    margin-left: 0.15rem;
   }
 
   .muted {
