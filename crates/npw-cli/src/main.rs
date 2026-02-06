@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command as ProcessCommand, ExitCode};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -91,6 +91,10 @@ enum Command {
         #[command(subcommand)]
         command: ItemCommand,
     },
+    Passkey {
+        #[command(subcommand)]
+        command: PasskeyCommand,
+    },
     Import {
         #[command(subcommand)]
         command: ImportCommand,
@@ -137,6 +141,14 @@ enum ConfigCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum PasskeyCommand {
+    List(PasskeyListArgs),
+    Show(ItemIdArgs),
+    OpenSite(ItemIdArgs),
+    CopyUsername(ItemIdArgs),
+}
+
+#[derive(Debug, Subcommand)]
 enum ImportCommand {
     Csv(ImportCsvArgs),
 }
@@ -163,8 +175,9 @@ enum DuplicatePolicyArg {
 
 #[derive(Debug, Args)]
 struct SearchArgs {
-    path: Option<PathBuf>,
     query: String,
+    #[arg(long)]
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -232,8 +245,9 @@ struct VaultChangePasswordArgs {
 
 #[derive(Debug, Args)]
 struct ItemIdArgs {
-    path: Option<PathBuf>,
     id: String,
+    #[arg(long)]
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -284,6 +298,11 @@ struct ItemListArgs {
     path: Option<PathBuf>,
     #[arg(long, value_enum)]
     item_type: Option<ItemTypeArg>,
+}
+
+#[derive(Debug, Args)]
+struct PasskeyListArgs {
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -540,6 +559,7 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
             VaultCommand::ChangePassword(args) => handle_vault_change_password(cli, &config, args),
         },
         Command::Item { command } => handle_item_command(cli, &config, command),
+        Command::Passkey { command } => handle_passkey_command(cli, &config, command),
         Command::Import { command } => handle_import_command(cli, &config, command),
         Command::Export { command } => handle_export_command(cli, &config, command),
         Command::Totp(args) => handle_totp(cli, &config, args),
@@ -764,6 +784,123 @@ fn handle_item_command(
         ItemCommand::Get(args) => handle_item_get(cli, config, args),
         ItemCommand::List(args) => handle_item_list(cli, config, args),
         ItemCommand::Delete(args) => handle_item_delete(cli, config, args),
+    }
+}
+
+fn handle_passkey_command(
+    cli: &Cli,
+    config: &AppConfig,
+    command: &PasskeyCommand,
+) -> Result<CommandOutput, CliError> {
+    match command {
+        PasskeyCommand::List(args) => handle_passkey_list(cli, config, args),
+        PasskeyCommand::Show(args) => handle_passkey_show(cli, config, args),
+        PasskeyCommand::OpenSite(args) => handle_passkey_open_site(cli, config, args),
+        PasskeyCommand::CopyUsername(args) => handle_passkey_copy_username(cli, config, args),
+    }
+}
+
+fn handle_passkey_list(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &PasskeyListArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let items = payload.list_items(Some(ItemTypeFilter::PasskeyRef));
+    let items_json = items_to_json(&items)?;
+
+    Ok(CommandOutput {
+        message: serde_json::to_string_pretty(&items_json)
+            .unwrap_or_else(|_| "failed to serialize passkey list".to_owned()),
+        payload: json!({
+            "count": items.len(),
+            "items": items_json
+        }),
+    })
+}
+
+fn handle_passkey_show(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemIdArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let passkey = find_passkey_item(&payload, &args.id)?;
+    let value = serde_json::to_value(passkey).map_err(|_| CliError {
+        code: CliExitCode::General,
+        kind: "passkey_serialize_failed",
+        message: "failed to serialize passkey".to_owned(),
+    })?;
+
+    Ok(CommandOutput {
+        message: serde_json::to_string_pretty(&value)
+            .unwrap_or_else(|_| "failed to serialize passkey".to_owned()),
+        payload: json!({
+            "item": value
+        }),
+    })
+}
+
+fn handle_passkey_open_site(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemIdArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let passkey = find_passkey_item(&payload, &args.id)?;
+    let url = format!("https://{}", passkey.rp_id);
+    open_external_url(&url).map_err(|error| CliError {
+        code: CliExitCode::General,
+        kind: "open_site_failed",
+        message: format!("failed to open site `{url}`: {error}"),
+    })?;
+
+    Ok(CommandOutput {
+        message: format!("Opened {}", url),
+        payload: json!({
+            "id": passkey.id,
+            "url": url
+        }),
+    })
+}
+
+fn handle_passkey_copy_username(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemIdArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let passkey = find_passkey_item(&payload, &args.id)?;
+    let username = passkey
+        .user_display_name
+        .as_deref()
+        .ok_or_else(|| CliError::usage("passkey item has no `user_display_name` value to copy"))?;
+
+    Ok(CommandOutput {
+        message: username.to_owned(),
+        payload: json!({
+            "id": passkey.id,
+            "username": username
+        }),
+    })
+}
+
+fn find_passkey_item<'a>(
+    payload: &'a VaultPayload,
+    id: &str,
+) -> Result<&'a PasskeyRefItem, CliError> {
+    let item = payload.get_item(id).ok_or_else(|| CliError {
+        code: CliExitCode::Usage,
+        kind: "item_not_found",
+        message: format!("item not found: {id}"),
+    })?;
+    match item {
+        VaultItem::PasskeyRef(passkey) => Ok(passkey),
+        _ => Err(CliError::usage("item is not a passkey_ref")),
     }
 }
 
@@ -2267,6 +2404,49 @@ fn totp_algorithm_name(algorithm: TotpAlgorithm) -> &'static str {
         TotpAlgorithm::SHA256 => "SHA256",
         TotpAlgorithm::SHA512 => "SHA512",
     }
+}
+
+fn open_external_url(url: &str) -> Result<(), std::io::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = ProcessCommand::new("open").arg(url).status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(
+            "`open` exited with a non-zero status",
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = ProcessCommand::new("cmd")
+            .args(["/C", "start", "", url])
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(
+            "`cmd /C start` exited with a non-zero status",
+        ));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let status = ProcessCommand::new("xdg-open").arg(url).status()?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(
+            "`xdg-open` exited with a non-zero status",
+        ));
+    }
+
+    #[allow(unreachable_code)]
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "unsupported platform for open-site",
+    ))
 }
 
 fn unix_seconds_now() -> u64 {

@@ -108,4 +108,5 @@ These become authoritative once scaffolded in Step 1:
 - [x] M6 slice complete: CLI recovery (`npw recover`, `--auto`) with backup listing, header validation, and restore flow that preserves the current vault as `.corrupt`.
 - [x] M6 slice complete: `vault backup` and `vault change-password` (including `--rotate-vault-key`) with validation, backup-on-write behavior, and smoke verification.
 - [x] M6 slice complete: `import csv` (duplicate policy + unknown-column warnings) and `export csv|json|encrypted` with redacted defaults and plaintext warning/ack flows.
-- [ ] M6 in progress: remaining CLI parity (Bitwarden JSON import, migration commands, passkey commands, TOTP copy/export-qr) and structured audit logging.
+- [x] M6 slice complete: `passkey list|show|open-site|copy-username` commands over `passkey_ref` items.
+- [ ] M6 in progress: remaining CLI parity (Bitwarden JSON import, migration commands, TOTP copy/export-qr) and structured audit logging.
