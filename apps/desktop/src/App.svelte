@@ -14,6 +14,7 @@
   let loginDetail = null
   let totp = null
   let totpInterval = null
+  let recents = []
 
   onMount(async () => {
     try {
@@ -21,6 +22,12 @@
       bridgeStatus = formatStatus(banner)
     } catch (error) {
       bridgeStatus = formatStatus(formatError(error))
+    }
+
+    try {
+      await refreshRecents()
+    } catch {
+      // Best-effort: recents are not security-critical.
     }
   })
 
@@ -36,6 +43,7 @@
         label: vaultLabel
       })
       lastResult = `Created vault at ${vaultPath}`
+      await refreshRecents()
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -49,6 +57,7 @@
       })
       masterPassword = ''
       lastResult = `Vault unlocked: ${status.path}`
+      await refreshRecents()
       await refreshItems()
     } catch (error) {
       lastResult = formatError(error)
@@ -65,6 +74,54 @@
       totp = null
       clearTotpInterval()
       lastResult = 'Vault locked'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const refreshRecents = async () => {
+    recents = await window.npw.vaultRecentsList()
+  }
+
+  const openRecent = (vault) => {
+    vaultPath = vault.path
+    if (vault.label) {
+      vaultLabel = vault.label
+    }
+    lastResult = `Selected vault: ${vault.path}`
+  }
+
+  const removeRecent = async (vault) => {
+    try {
+      await window.npw.vaultRecentsRemove({ path: vault.path })
+      await refreshRecents()
+      lastResult = `Removed ${vault.path} from recents`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const pickOpenVault = async () => {
+    try {
+      const picked = await window.npw.vaultDialogOpen()
+      if (!picked) {
+        return
+      }
+      vaultPath = picked
+      lastResult = `Selected vault: ${picked}`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const pickCreateVault = async () => {
+    try {
+      const picked = await window.npw.vaultDialogCreate()
+      if (!picked) {
+        return
+      }
+      vaultPath = picked
+      lastResult = `Selected new vault path: ${picked}`
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -183,6 +240,32 @@
 <main class="shell">
   <h1>{APP_TITLE}</h1>
   <p>{bridgeStatus}</p>
+
+  <section class="picker">
+    <h2>Recent Vaults</h2>
+    {#if recents.length === 0}
+      <p class="muted">No recent vaults yet.</p>
+    {:else}
+      <ul class="recent-list">
+        {#each recents as vault (vault.path)}
+          <li class="recent">
+            <div class="recent-meta">
+              <strong>{vault.label || '(unlabeled)'}</strong>
+              <span class="muted">{vault.path}</span>
+            </div>
+            <div class="actions">
+              <button type="button" on:click={() => openRecent(vault)}>Use</button>
+              <button class="secondary" type="button" on:click={() => removeRecent(vault)}>Remove</button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <div class="actions">
+      <button type="button" on:click={pickCreateVault}>Create New Vault…</button>
+      <button type="button" on:click={pickOpenVault}>Open Existing Vault…</button>
+    </div>
+  </section>
 
   <label>
     Vault path
@@ -341,6 +424,48 @@
     flex-wrap: wrap;
   }
 
+  .picker {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #93a8b5;
+    border-radius: 0.75rem;
+    background: #f4fbff;
+  }
+
+  .picker h2 {
+    margin: 0;
+  }
+
+  .recent-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .recent {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid #dde8ee;
+    border-radius: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    background: #ffffff;
+  }
+
+  .recent-meta {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .recent-meta span {
+    word-break: break-word;
+  }
+
   button {
     border: 1px solid #31536b;
     border-radius: 0.35rem;
@@ -349,6 +474,12 @@
     background: #23465f;
     color: #f4fbff;
     font: inherit;
+  }
+
+  button.secondary {
+    border-color: #93a8b5;
+    background: #dde8ee;
+    color: #23465f;
   }
 
   pre {

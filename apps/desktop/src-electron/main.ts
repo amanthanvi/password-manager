@@ -1,5 +1,6 @@
-import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
 import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +10,7 @@ const isDev = !app.isPackaged
 const require = createRequire(import.meta.url)
 
 const DEFAULT_CLIPBOARD_CLEAR_SECONDS = 30
+const MAX_RECENT_VAULTS = 10
 
 type VaultStatus = {
   path: string
@@ -17,6 +19,12 @@ type VaultStatus = {
   kdfMemoryKib: number
   kdfIterations: number
   kdfParallelism: number
+}
+
+type RecentVault = {
+  path: string
+  label: string
+  lastOpenedAt: number
 }
 
 type ItemSummary = {
@@ -109,13 +117,50 @@ app.on('window-all-closed', () => {
 function registerIpcHandlers(api: AddonApi) {
   let session: VaultSession | null = null
   let clipboardClear: { token: Buffer; digest: string; timeoutId: NodeJS.Timeout } | null = null
+  const recentsPath = path.join(app.getPath('userData'), 'recent-vaults.json')
 
   ipcMain.handle('core.banner', () => api.coreBanner())
+
+  ipcMain.handle('vault.recents.list', async () => loadRecents())
+  ipcMain.handle('vault.recents.remove', async (_event, payload: { path: string }) => {
+    const safePath = validateText(payload.path, 'path', 4096)
+    await removeRecentVault(safePath)
+    return true
+  })
+
+  ipcMain.handle('vault.dialog.open', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'npw Vault', extensions: ['npw'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('vault.dialog.create', async () => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'vault.npw',
+      filters: [{ name: 'npw Vault', extensions: ['npw'] }]
+    })
+    if (result.canceled || !result.filePath) {
+      return null
+    }
+    return ensureNpwExtension(result.filePath)
+  })
+
   ipcMain.handle('vault.create', (_event, payload: { path: string; masterPassword: string; label?: string }) => {
     const safePath = validateText(payload.path, 'path', 4096)
     const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
     const safeLabel = payload.label ? validateText(payload.label, 'label', 64) : undefined
     api.vaultCreate(safePath, safePassword, safeLabel)
+    try {
+      const status = api.vaultStatus(safePath)
+      void upsertRecentVault(status.path, status.label)
+    } catch {
+      // Best-effort: recents are not security-critical.
+    }
     return true
   })
   ipcMain.handle('vault.status', (_event, payload: { path: string }) => {
@@ -131,7 +176,9 @@ function registerIpcHandlers(api: AddonApi) {
     const safePath = validateText(payload.path, 'path', 4096)
     const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
     session = api.vaultUnlock(safePath, safePassword)
-    return session.status()
+    const status = session.status()
+    void upsertRecentVault(status.path, status.label)
+    return status
   })
   ipcMain.handle('vault.lock', () => {
     if (session) {
@@ -220,6 +267,47 @@ function registerIpcHandlers(api: AddonApi) {
     }, timeoutSeconds * 1000)
     clipboardClear = { token, digest, timeoutId }
   }
+
+  async function loadRecents(): Promise<RecentVault[]> {
+    try {
+      const raw = await fs.readFile(recentsPath, 'utf8')
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) {
+        return []
+      }
+      return parsed
+        .filter((entry): entry is RecentVault => {
+          if (!entry || typeof entry !== 'object') {
+            return false
+          }
+          const candidate = entry as Partial<RecentVault>
+          return typeof candidate.path === 'string' && typeof candidate.label === 'string'
+        })
+        .slice(0, MAX_RECENT_VAULTS)
+    } catch (error) {
+      if (isErrnoException(error) && error.code === 'ENOENT') {
+        return []
+      }
+      return []
+    }
+  }
+
+  async function saveRecents(vaults: RecentVault[]) {
+    await fs.mkdir(path.dirname(recentsPath), { recursive: true })
+    await fs.writeFile(recentsPath, JSON.stringify(vaults.slice(0, MAX_RECENT_VAULTS), null, 2), 'utf8')
+  }
+
+  async function upsertRecentVault(vaultPath: string, label: string) {
+    const now = Date.now()
+    const current = await loadRecents()
+    const next: RecentVault[] = [{ path: vaultPath, label, lastOpenedAt: now }, ...current.filter((entry) => entry.path !== vaultPath)]
+    await saveRecents(next)
+  }
+
+  async function removeRecentVault(vaultPath: string) {
+    const current = await loadRecents()
+    await saveRecents(current.filter((entry) => entry.path !== vaultPath))
+  }
 }
 
 function validateText(value: string, field: string, maxLen: number): string {
@@ -249,6 +337,17 @@ function validateOptionalText(value: string, field: string, maxLen: number): str
 
 function sha256Base64(token: Buffer, value: string): string {
   return crypto.createHash('sha256').update(token).update(value).digest('base64')
+}
+
+function ensureNpwExtension(filePath: string): string {
+  return filePath.toLowerCase().endsWith('.npw') ? filePath : `${filePath}.npw`
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+  return 'code' in error
 }
 
 function loadAddon(): AddonApi {

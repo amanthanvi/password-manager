@@ -8,6 +8,12 @@ declare global {
     kdfParallelism: number
   }
 
+  interface RecentVault {
+    path: string
+    label: string
+    lastOpenedAt: number
+  }
+
   interface ItemSummary {
     id: string
     itemType: string
@@ -43,6 +49,10 @@ declare global {
   interface Window {
     npw: {
       coreBanner: () => Promise<string>
+      vaultRecentsList: () => Promise<RecentVault[]>
+      vaultRecentsRemove: (payload: { path: string }) => Promise<boolean>
+      vaultDialogOpen: () => Promise<string | null>
+      vaultDialogCreate: () => Promise<string | null>
       vaultCreate: (payload: { path: string; masterPassword: string; label?: string }) => Promise<boolean>
       vaultStatus: (payload: { path: string }) => Promise<VaultStatus>
       vaultCheck: (payload: { path: string; masterPassword: string }) => Promise<VaultStatus>

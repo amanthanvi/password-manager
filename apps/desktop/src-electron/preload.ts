@@ -9,6 +9,12 @@ type VaultStatus = {
   kdfParallelism: number
 }
 
+type RecentVault = {
+  path: string
+  label: string
+  lastOpenedAt: number
+}
+
 type ItemSummary = {
   id: string
   itemType: string
@@ -43,6 +49,10 @@ type TotpCode = {
 
 contextBridge.exposeInMainWorld('npw', {
   coreBanner: (): Promise<string> => ipcRenderer.invoke('core.banner'),
+  vaultRecentsList: (): Promise<RecentVault[]> => ipcRenderer.invoke('vault.recents.list'),
+  vaultRecentsRemove: (payload: { path: string }): Promise<boolean> => ipcRenderer.invoke('vault.recents.remove', payload),
+  vaultDialogOpen: (): Promise<string | null> => ipcRenderer.invoke('vault.dialog.open'),
+  vaultDialogCreate: (): Promise<string | null> => ipcRenderer.invoke('vault.dialog.create'),
   vaultCreate: (payload: { path: string; masterPassword: string; label?: string }): Promise<boolean> =>
     ipcRenderer.invoke('vault.create', payload),
   vaultStatus: (payload: { path: string }): Promise<VaultStatus> => ipcRenderer.invoke('vault.status', payload),
