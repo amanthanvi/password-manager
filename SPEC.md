@@ -226,6 +226,10 @@ GUI and CLI MUST offer both modes. When creating a master password, the UI SHOUL
 - The system MUST support exporting TOTP seeds as QR codes in **two formats**:
     1. **`otpauth://` URI** (default): Standard `otpauth://totp/label?secret=...&issuer=...&algorithm=...&digits=...&period=...` for interoperability with Google Authenticator, Authy, and other authenticator apps.
     2. **Encrypted QR**: Seed encrypted before encoding in QR. Only npw can scan it. For secure npw-to-npw transfer.
+- Encrypted QR payload encoding (v0.1.0):
+    - QR data MUST be ASCII: `npw:totp-qr1:<base64url_nopad(NPW1_BYTES)>`
+    - `NPW1_BYTES` MUST be an `NPW1` container whose decrypted payload is a UTF-8 `otpauth://...` URI (no other fields); `vault_label` MUST be `"npw-totp-qr"`.
+    - The QR password MUST be entered at export time and MUST NOT be the same as the vault master password.
 - User MUST choose the format at export time.
 - QR rendering MUST use a bundled library (no network dependency).
 
@@ -962,7 +966,7 @@ The CLI is **stateless**: every command re-derives keys from the master password
 - **Vault**: `vault init|unlock|lock|status|check|change-password|backup`
 - **Items**: `item add|get|list|edit|delete|restore|copy`
 - **Search**: `search`
-- **TOTP**: `totp add|show|copy|export-qr`
+- **TOTP**: `totp <item_id>` (alias for `totp show <item_id>`), `totp add|show|copy|export-qr`
 - **Passkeys**: `passkey list|show|open-site`
 - **Import/Export**: `import csv|bitwarden-json`, `export csv|json|encrypted`
 - **Config**: `config get|set|list`

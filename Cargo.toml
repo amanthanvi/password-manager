@@ -17,6 +17,7 @@ rust-version = "1.93"
 [workspace.dependencies]
 anyhow = "1.0.100"
 argon2 = "0.5.3"
+arboard = "3.6.1"
 chacha20poly1305 = "0.10.1"
 ciborium = "0.2.2"
 clap = { version = "4.5.53", features = ["derive"] }
@@ -29,6 +30,7 @@ hkdf = "0.12.4"
 hmac = "0.12.1"
 napi = { version = "3.5.2", default-features = false, features = ["napi6"] }
 napi-derive = "3.3.3"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 rpassword = "7.4.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_bytes = "0.11.17"

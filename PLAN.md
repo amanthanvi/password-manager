@@ -111,4 +111,5 @@ These become authoritative once scaffolded in Step 1:
 - [x] M6 slice complete: `passkey list|show|open-site|copy-username` commands over `passkey_ref` items.
 - [x] M6 slice complete: `import bitwarden-json` with login/note mapping, duplicate policy handling, and TOTP URI/base32 support.
 - [x] M6 slice complete: `migrate` and `downgrade` command surface with schema guardrails for current v1 payloads.
-- [ ] M6 in progress: remaining CLI parity (TOTP copy/export-qr) and structured audit logging.
+- [x] M6 slice complete: CLI `totp add|show|copy|export-qr` (otpauth:// + encrypted QR formats) and clipboard auto-clear helper.
+- [ ] M6 in progress: structured audit logging + secret redaction tests.

@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, ExitCode};
+use std::process::{Command as ProcessCommand, ExitCode, Stdio};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use arboard::Clipboard;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use data_encoding::BASE32_NOPAD;
+use data_encoding::{BASE32_NOPAD, BASE64URL_NOPAD};
 use directories::ProjectDirs;
+use getrandom::fill;
 use npw_core::{
     CreateVaultInput, ItemTypeFilter, KdfParams, LoginItem, ModelError, NoteItem, PasskeyRefItem,
     ReencryptVaultInput, TotpAlgorithm, TotpConfig, TotpError, UrlEntry, UrlMatchType, VaultError,
@@ -17,11 +19,14 @@ use npw_core::{
 use npw_storage::{
     BackupEntry, StorageError, list_backups, read_vault, recover_from_backup, write_vault,
 };
+use qrcode::{EcLevel, QrCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const JSON_SCHEMA_VERSION: u8 = 1;
+const ENCRYPTED_TOTP_QR_PREFIX: &str = "npw:totp-qr1:";
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -113,6 +118,17 @@ enum Command {
         command: ConfigCommand,
     },
     Generate(GenerateArgs),
+    #[command(hide = true)]
+    Internal {
+        #[command(subcommand)]
+        command: InternalCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum InternalCommand {
+    #[command(hide = true)]
+    ClipboardClear(ClipboardClearArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -304,12 +320,77 @@ struct ItemIdArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(subcommand_precedence_over_arg = true)]
+#[command(arg_required_else_help = true)]
 struct TotpArgs {
+    #[command(subcommand)]
+    command: Option<TotpCommand>,
+    #[arg(value_name = "ITEM_ID")]
+    id: Option<String>,
+    #[arg(long, global = true)]
+    path: Option<PathBuf>,
+    #[arg(long, global = true)]
+    at: Option<u64>,
+}
+
+#[derive(Debug, Subcommand)]
+enum TotpCommand {
+    Add(TotpAddArgs),
+    Show(TotpShowArgs),
+    Copy(TotpCopyArgs),
+    ExportQr(TotpExportQrArgs),
+}
+
+#[derive(Debug, Args)]
+struct TotpShowArgs {
+    id: String,
+}
+
+#[derive(Debug, Args)]
+struct TotpCopyArgs {
+    id: String,
+}
+
+#[derive(Debug, Args)]
+struct TotpAddArgs {
     id: String,
     #[arg(long)]
-    path: Option<PathBuf>,
+    secret_base32: Option<String>,
     #[arg(long)]
-    at: Option<u64>,
+    uri: Option<String>,
+    #[arg(long)]
+    issuer: Option<String>,
+    #[arg(long, value_enum)]
+    algorithm: Option<TotpAlgorithmArg>,
+    #[arg(long)]
+    digits: Option<u8>,
+    #[arg(long)]
+    period: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TotpQrFormat {
+    Otpauth,
+    Encrypted,
+}
+
+#[derive(Debug, Args)]
+struct TotpExportQrArgs {
+    id: String,
+    #[arg(long, value_enum, default_value_t = TotpQrFormat::Otpauth)]
+    format: TotpQrFormat,
+    #[arg(long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ClipboardClearArgs {
+    #[arg(long)]
+    expected_hash: String,
+    #[arg(long)]
+    token: String,
+    #[arg(long)]
+    timeout_seconds: u32,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -622,6 +703,7 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
         Command::Search(args) => handle_search(cli, &config, args),
         Command::Config { command } => handle_config(command, &mut config, &config_path),
         Command::Generate(args) => handle_generate(args),
+        Command::Internal { command } => handle_internal_command(command),
     }
 }
 
@@ -1481,7 +1563,8 @@ fn handle_export_encrypted(
         .insert("export_meta.redacted".to_owned(), args.redacted.to_string());
     let payload_bytes = export_payload.to_cbor().map_err(map_model_error)?;
 
-    let export_password = read_master_password(false, true)?;
+    let export_password =
+        read_interactive_password("Export password: ", Some("Confirm export password: "))?;
     if export_password == master_password {
         return Err(CliError::usage(
             "export password must differ from the vault master password",
@@ -2003,33 +2086,48 @@ fn handle_search(
 }
 
 fn handle_totp(cli: &Cli, config: &AppConfig, args: &TotpArgs) -> Result<CommandOutput, CliError> {
-    let (_path, _password, _unlocked, payload) =
-        load_vault_payload(cli, config, args.path.clone())?;
-    let item = payload.get_item(&args.id).ok_or_else(|| CliError {
-        code: CliExitCode::Usage,
-        kind: "item_not_found",
-        message: format!("item not found: {}", args.id),
-    })?;
-    let login = match item {
-        VaultItem::Login(login) => login,
-        _ => {
-            return Err(CliError::usage(
-                "totp can only be generated for login items",
-            ));
+    match &args.command {
+        Some(TotpCommand::Add(command)) => handle_totp_add(cli, config, args.path.clone(), command),
+        Some(TotpCommand::Show(command)) => {
+            handle_totp_show(cli, config, args.path.clone(), args.at, &command.id)
         }
-    };
+        Some(TotpCommand::Copy(command)) => {
+            handle_totp_copy(cli, config, args.path.clone(), args.at, &command.id)
+        }
+        Some(TotpCommand::ExportQr(command)) => {
+            handle_totp_export_qr(cli, config, args.path.clone(), command)
+        }
+        None => {
+            let id = args
+                .id
+                .as_deref()
+                .ok_or_else(|| CliError::usage("missing item id"))?;
+            handle_totp_show(cli, config, args.path.clone(), args.at, id)
+        }
+    }
+}
+
+fn handle_totp_show(
+    cli: &Cli,
+    config: &AppConfig,
+    path: Option<PathBuf>,
+    at: Option<u64>,
+    id: &str,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) = load_vault_payload(cli, config, path)?;
+    let login = find_login_item(&payload, id)?;
     let totp = login
         .totp
         .as_ref()
         .ok_or_else(|| CliError::usage("login item has no TOTP configuration"))?;
-    let at = args.at.unwrap_or_else(unix_seconds_now);
+    let at = at.unwrap_or_else(unix_seconds_now);
     let code = generate_totp(totp, at).map_err(map_totp_error)?;
     let remaining = u64::from(totp.period) - (at % u64::from(totp.period));
 
     Ok(CommandOutput {
         message: code.clone(),
         payload: json!({
-            "id": args.id,
+            "id": id,
             "code": code,
             "at": at,
             "period": totp.period,
@@ -2038,6 +2136,475 @@ fn handle_totp(cli: &Cli, config: &AppConfig, args: &TotpArgs) -> Result<Command
             "seconds_remaining": remaining
         }),
     })
+}
+
+fn handle_totp_add(
+    cli: &Cli,
+    config: &AppConfig,
+    path: Option<PathBuf>,
+    args: &TotpAddArgs,
+) -> Result<CommandOutput, CliError> {
+    let (path, password, unlocked, mut payload) = load_vault_payload(cli, config, path)?;
+    let now = unix_seconds_now();
+    let totp = build_totp_config(args)?;
+
+    let login = find_login_item_mut(&mut payload, &args.id)?;
+    login.totp = Some(totp);
+    login.updated_at = now;
+    payload.updated_at = now;
+
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!("Added TOTP to item {}", args.id),
+        payload: json!({
+            "id": args.id,
+            "updated": true,
+            "has_totp": true
+        }),
+    })
+}
+
+fn handle_totp_copy(
+    cli: &Cli,
+    config: &AppConfig,
+    path: Option<PathBuf>,
+    at: Option<u64>,
+    id: &str,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) = load_vault_payload(cli, config, path)?;
+    let login = find_login_item(&payload, id)?;
+    let totp = login
+        .totp
+        .as_ref()
+        .ok_or_else(|| CliError::usage("login item has no TOTP configuration"))?;
+    let at = at.unwrap_or_else(unix_seconds_now);
+    let code = generate_totp(totp, at).map_err(map_totp_error)?;
+    let remaining = u64::from(totp.period) - (at % u64::from(totp.period));
+
+    let timeout = config.security.clipboard_timeout_seconds;
+    let scheduled = clipboard_copy_with_timeout(&code, timeout)?;
+    let message = match scheduled {
+        Some(seconds) => format!("Copied TOTP code to clipboard (clears in {seconds}s)"),
+        None => "Copied TOTP code to clipboard (auto-clear disabled)".to_owned(),
+    };
+
+    Ok(CommandOutput {
+        message,
+        payload: json!({
+            "id": id,
+            "copied": true,
+            "at": at,
+            "period": totp.period,
+            "digits": totp.digits,
+            "algorithm": totp_algorithm_name(totp.algorithm),
+            "seconds_remaining": remaining,
+            "clipboard_timeout_seconds": timeout,
+            "auto_clear_scheduled": scheduled.is_some()
+        }),
+    })
+}
+
+fn handle_totp_export_qr(
+    cli: &Cli,
+    config: &AppConfig,
+    path: Option<PathBuf>,
+    args: &TotpExportQrArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, master_password, unlocked, payload) = load_vault_payload(cli, config, path)?;
+    let login = find_login_item(&payload, &args.id)?;
+    let totp = login
+        .totp
+        .as_ref()
+        .ok_or_else(|| CliError::usage("login item has no TOTP configuration"))?;
+
+    let data = match args.format {
+        TotpQrFormat::Otpauth => login_totp_uri(&login.title, login.username.as_deref(), totp),
+        TotpQrFormat::Encrypted => {
+            if cli.non_interactive {
+                return Err(CliError::usage(
+                    "encrypted QR export does not support --non-interactive",
+                ));
+            }
+            let otpauth = login_totp_uri(&login.title, login.username.as_deref(), totp);
+            let transfer_password = read_interactive_password(
+                "QR password (encrypted transfer): ",
+                Some("Confirm QR password: "),
+            )?;
+            if transfer_password == master_password {
+                return Err(CliError::usage(
+                    "QR password must differ from the vault master password",
+                ));
+            }
+
+            encode_encrypted_totp_qr_payload(
+                &transfer_password,
+                unlocked.header.kdf_params,
+                &otpauth,
+            )?
+        }
+    };
+
+    let qr = QrCode::with_error_correction_level(data.as_bytes(), EcLevel::M).map_err(|error| {
+        CliError {
+            code: CliExitCode::General,
+            kind: "qr_encode_failed",
+            message: error.to_string(),
+        }
+    })?;
+
+    let output = if let Some(output_path) = &args.output {
+        ensure_output_parent(output_path)?;
+        let extension = output_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if extension == "svg" {
+            let svg = qr
+                .render::<qrcode::render::svg::Color<'_>>()
+                .quiet_zone(true)
+                .min_dimensions(320, 320)
+                .build();
+            std::fs::write(output_path, svg).map_err(map_io_error)?;
+        } else if extension == "txt" {
+            let text = qr
+                .render::<qrcode::render::unicode::Dense1x2>()
+                .quiet_zone(true)
+                .build();
+            std::fs::write(output_path, text).map_err(map_io_error)?;
+        } else {
+            return Err(CliError::usage(
+                "--output must end with .svg or .txt (or omit --output to print)",
+            ));
+        }
+
+        Some(output_path.clone())
+    } else {
+        None
+    };
+
+    if let Some(output) = output {
+        return Ok(CommandOutput {
+            message: format!("Wrote QR code to {}", output.display()),
+            payload: json!({
+                "id": args.id,
+                "format": match args.format {
+                    TotpQrFormat::Otpauth => "otpauth",
+                    TotpQrFormat::Encrypted => "encrypted",
+                },
+                "output": output,
+                "data": data
+            }),
+        });
+    }
+
+    let rendered = qr
+        .render::<qrcode::render::unicode::Dense1x2>()
+        .quiet_zone(true)
+        .build();
+    Ok(CommandOutput {
+        message: rendered.clone(),
+        payload: json!({
+            "id": args.id,
+            "format": match args.format {
+                TotpQrFormat::Otpauth => "otpauth",
+                TotpQrFormat::Encrypted => "encrypted",
+            },
+            "render": "unicode",
+            "data": data,
+            "qr": rendered
+        }),
+    })
+}
+
+fn find_login_item<'a>(payload: &'a VaultPayload, id: &str) -> Result<&'a LoginItem, CliError> {
+    let item = payload.get_item(id).ok_or_else(|| CliError {
+        code: CliExitCode::Usage,
+        kind: "item_not_found",
+        message: format!("item not found: {id}"),
+    })?;
+    match item {
+        VaultItem::Login(login) => Ok(login),
+        _ => Err(CliError::usage("item is not a login item")),
+    }
+}
+
+fn find_login_item_mut<'a>(
+    payload: &'a mut VaultPayload,
+    id: &str,
+) -> Result<&'a mut LoginItem, CliError> {
+    let item = payload
+        .items
+        .iter_mut()
+        .find(|item| item.id() == id)
+        .ok_or_else(|| CliError {
+            code: CliExitCode::Usage,
+            kind: "item_not_found",
+            message: format!("item not found: {id}"),
+        })?;
+    match item {
+        VaultItem::Login(login) => Ok(login),
+        _ => Err(CliError::usage("item is not a login item")),
+    }
+}
+
+fn build_totp_config(args: &TotpAddArgs) -> Result<TotpConfig, CliError> {
+    if args.secret_base32.is_some() && args.uri.is_some() {
+        return Err(CliError::usage(
+            "provide either --secret-base32 or --uri, not both",
+        ));
+    }
+
+    if let Some(uri) = &args.uri {
+        if args.issuer.is_some()
+            || args.algorithm.is_some()
+            || args.digits.is_some()
+            || args.period.is_some()
+        {
+            return Err(CliError::usage(
+                "--uri cannot be combined with explicit TOTP field overrides",
+            ));
+        }
+        return parse_otpauth_uri(uri).map_err(map_totp_error);
+    }
+
+    if let Some(secret) = &args.secret_base32 {
+        let config = TotpConfig {
+            seed: decode_base32_secret(secret).map_err(map_totp_error)?,
+            issuer: args.issuer.clone(),
+            algorithm: args.algorithm.unwrap_or(TotpAlgorithmArg::Sha1).into_core(),
+            digits: args.digits.unwrap_or(6),
+            period: args.period.unwrap_or(30),
+        };
+        config.validate().map_err(|error| CliError {
+            code: CliExitCode::Usage,
+            kind: "invalid_totp_config",
+            message: error.to_string(),
+        })?;
+        return Ok(config);
+    }
+
+    Err(CliError::usage("provide --secret-base32 or --uri"))
+}
+
+fn encode_encrypted_totp_qr_payload(
+    password: &str,
+    kdf_params: KdfParams,
+    otpauth_uri: &str,
+) -> Result<String, CliError> {
+    let bytes = create_vault_file(&CreateVaultInput {
+        master_password: password,
+        payload_plaintext: otpauth_uri.as_bytes(),
+        item_count: 0,
+        vault_label: Some("npw-totp-qr"),
+        kdf_params,
+    })
+    .map_err(map_vault_error)?;
+    Ok(format!(
+        "{ENCRYPTED_TOTP_QR_PREFIX}{}",
+        BASE64URL_NOPAD.encode(&bytes)
+    ))
+}
+
+#[cfg(test)]
+fn decode_encrypted_totp_qr_payload(payload: &str, password: &str) -> Result<String, CliError> {
+    let encoded = payload
+        .strip_prefix(ENCRYPTED_TOTP_QR_PREFIX)
+        .ok_or_else(|| CliError::usage("missing encrypted QR prefix"))?;
+    let bytes = BASE64URL_NOPAD
+        .decode(encoded.as_bytes())
+        .map_err(|_| CliError::usage("invalid encrypted QR encoding"))?;
+    let unlocked = unlock_vault_file(&bytes, password).map_err(map_vault_error)?;
+    String::from_utf8(unlocked.payload_plaintext).map_err(|_| CliError {
+        code: CliExitCode::CorruptOrParse,
+        kind: "qr_payload_decode_failed",
+        message: "QR payload is not valid UTF-8".to_owned(),
+    })
+}
+
+fn handle_internal_clipboard_clear(args: &ClipboardClearArgs) -> Result<CommandOutput, CliError> {
+    if args.timeout_seconds == 0 {
+        return Ok(CommandOutput {
+            message: "Clipboard clear skipped (timeout disabled)".to_owned(),
+            payload: json!({
+                "cleared": false,
+                "timeout_seconds": 0
+            }),
+        });
+    }
+
+    let expected_hash = BASE64URL_NOPAD
+        .decode(args.expected_hash.as_bytes())
+        .map_err(|_| CliError::usage("invalid expected hash encoding"))?;
+    let token = BASE64URL_NOPAD
+        .decode(args.token.as_bytes())
+        .map_err(|_| CliError::usage("invalid token encoding"))?;
+
+    std::thread::sleep(Duration::from_secs(u64::from(args.timeout_seconds)));
+
+    let mut clipboard = match Clipboard::new() {
+        Ok(clipboard) => clipboard,
+        Err(_) => {
+            return Ok(CommandOutput {
+                message: "Clipboard unavailable".to_owned(),
+                payload: json!({
+                    "cleared": false,
+                    "reason": "clipboard_unavailable"
+                }),
+            });
+        }
+    };
+
+    let current = match clipboard.get_text() {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(CommandOutput {
+                message: "Clipboard content unavailable".to_owned(),
+                payload: json!({
+                    "cleared": false,
+                    "reason": "clipboard_read_failed"
+                }),
+            });
+        }
+    };
+
+    if expected_hash == clipboard_expected_hash(&token, current.as_bytes()) {
+        let _ = clipboard.clear();
+        Ok(CommandOutput {
+            message: "Clipboard cleared".to_owned(),
+            payload: json!({
+                "cleared": true
+            }),
+        })
+    } else {
+        Ok(CommandOutput {
+            message: "Clipboard changed; not clearing".to_owned(),
+            payload: json!({
+                "cleared": false,
+                "reason": "clipboard_changed"
+            }),
+        })
+    }
+}
+
+fn clipboard_expected_hash(token: &[u8], value: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(token);
+    hasher.update(value);
+    hasher.finalize().to_vec()
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_set_text_secure(clipboard: &mut Clipboard, value: &str) -> Result<(), CliError> {
+    use arboard::SetExtApple;
+
+    clipboard
+        .set()
+        .exclude_from_history()
+        .text(value.to_owned())
+        .map_err(map_clipboard_error)
+}
+
+#[cfg(windows)]
+fn clipboard_set_text_secure(clipboard: &mut Clipboard, value: &str) -> Result<(), CliError> {
+    use arboard::SetExtWindows;
+
+    clipboard
+        .set()
+        .exclude_from_monitoring()
+        .text(value.to_owned())
+        .map_err(map_clipboard_error)
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+))]
+fn clipboard_set_text_secure(clipboard: &mut Clipboard, value: &str) -> Result<(), CliError> {
+    use arboard::SetExtLinux;
+
+    clipboard
+        .set()
+        .exclude_from_history()
+        .text(value.to_owned())
+        .map_err(map_clipboard_error)
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    windows,
+    all(
+        unix,
+        not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+    )
+)))]
+fn clipboard_set_text_secure(clipboard: &mut Clipboard, value: &str) -> Result<(), CliError> {
+    clipboard
+        .set_text(value.to_owned())
+        .map_err(map_clipboard_error)
+}
+
+fn clipboard_copy_with_timeout(value: &str, timeout_seconds: u32) -> Result<Option<u32>, CliError> {
+    let mut clipboard = Clipboard::new().map_err(map_clipboard_error)?;
+    clipboard_set_text_secure(&mut clipboard, value)?;
+
+    if timeout_seconds == 0 {
+        return Ok(None);
+    }
+
+    let mut token = [0u8; 16];
+    fill(&mut token).map_err(|_| CliError {
+        code: CliExitCode::General,
+        kind: "random_failed",
+        message: "failed to generate clipboard token".to_owned(),
+    })?;
+    let expected_hash = clipboard_expected_hash(&token, value.as_bytes());
+
+    spawn_clipboard_clear(timeout_seconds, &token, &expected_hash)?;
+    Ok(Some(timeout_seconds))
+}
+
+fn spawn_clipboard_clear(
+    timeout_seconds: u32,
+    token: &[u8],
+    expected_hash: &[u8],
+) -> Result<(), CliError> {
+    let exe = std::env::current_exe().map_err(map_io_error)?;
+    let token_encoded = BASE64URL_NOPAD.encode(token);
+    let expected_encoded = BASE64URL_NOPAD.encode(expected_hash);
+
+    let mut command = ProcessCommand::new(exe);
+    command
+        .arg("internal")
+        .arg("clipboard-clear")
+        .arg("--timeout-seconds")
+        .arg(timeout_seconds.to_string())
+        .arg("--token")
+        .arg(token_encoded)
+        .arg("--expected-hash")
+        .arg(expected_encoded)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    command.spawn().map_err(map_io_error)?;
+    Ok(())
+}
+
+fn map_clipboard_error(error: arboard::Error) -> CliError {
+    CliError {
+        code: CliExitCode::General,
+        kind: "clipboard_error",
+        message: error.to_string(),
+    }
 }
 
 fn handle_recover(
@@ -2308,6 +2875,12 @@ fn handle_generate(args: &GenerateArgs) -> Result<CommandOutput, CliError> {
     }
 }
 
+fn handle_internal_command(command: &InternalCommand) -> Result<CommandOutput, CliError> {
+    match command {
+        InternalCommand::ClipboardClear(args) => handle_internal_clipboard_clear(args),
+    }
+}
+
 fn load_config(config_override: Option<PathBuf>) -> Result<(AppConfig, PathBuf), CliError> {
     let config_path = match config_override {
         Some(path) => path,
@@ -2378,6 +2951,24 @@ fn validate_master_password(password: &str) -> Result<(), CliError> {
     ))
 }
 
+fn read_interactive_password(
+    prompt: &str,
+    confirm_prompt: Option<&str>,
+) -> Result<String, CliError> {
+    let password = rpassword::prompt_password(prompt).map_err(map_io_error)?;
+    if let Some(confirm_prompt) = confirm_prompt {
+        let confirmation = rpassword::prompt_password(confirm_prompt).map_err(map_io_error)?;
+        if password != confirmation {
+            return Err(CliError {
+                code: CliExitCode::Usage,
+                kind: "password_confirmation_failed",
+                message: "password confirmation does not match".to_owned(),
+            });
+        }
+    }
+    Ok(password)
+}
+
 fn read_master_password(non_interactive: bool, confirm: bool) -> Result<String, CliError> {
     if non_interactive {
         let mut raw = String::new();
@@ -2393,19 +2984,8 @@ fn read_master_password(non_interactive: bool, confirm: bool) -> Result<String, 
         return Ok(password);
     }
 
-    let password = rpassword::prompt_password("Master password: ").map_err(map_io_error)?;
-    if confirm {
-        let confirmation =
-            rpassword::prompt_password("Confirm master password: ").map_err(map_io_error)?;
-        if password != confirmation {
-            return Err(CliError {
-                code: CliExitCode::Usage,
-                kind: "password_confirmation_failed",
-                message: "password confirmation does not match".to_owned(),
-            });
-        }
-    }
-    Ok(password)
+    let confirm_prompt = confirm.then_some("Confirm master password: ");
+    read_interactive_password("Master password: ", confirm_prompt)
 }
 
 fn map_io_error(error: std::io::Error) -> CliError {
@@ -2855,4 +3435,28 @@ fn diceware_words() -> &'static [&'static str] {
                 .collect()
         })
         .as_slice()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload};
+    use npw_core::KdfParams;
+
+    #[test]
+    fn encrypted_totp_qr_payload_roundtrips() {
+        let otpauth = "otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&issuer=npw&algorithm=SHA1&digits=6&period=30";
+        let password = "npw-test-transfer-password";
+        let kdf_params = KdfParams {
+            memory_kib: 64 * 1024,
+            iterations: 1,
+            parallelism: 1,
+        };
+
+        let encoded = encode_encrypted_totp_qr_payload(password, kdf_params, otpauth)
+            .expect("payload should encode");
+        let decoded =
+            decode_encrypted_totp_qr_payload(&encoded, password).expect("payload should decode");
+
+        assert_eq!(decoded, otpauth);
+    }
 }
