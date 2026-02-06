@@ -23,3 +23,7 @@ sha2.workspace = true
 time.workspace = true
 toml.workspace = true
 uuid.workspace = true
+
+[[bin]]
+name = "npw"
+path = "src/main.rs"

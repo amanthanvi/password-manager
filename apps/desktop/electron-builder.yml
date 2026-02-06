@@ -1,5 +1,6 @@
 appId: com.npw.passwordmanager
 productName: npw
+artifactName: npw-desktop-${version}-${os}-${arch}.${ext}
 
 directories:
   output: dist-packages
