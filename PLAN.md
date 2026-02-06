@@ -127,3 +127,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop can render otpauth:// TOTP QR codes for login items (export flow).
 - [x] M9 slice complete: desktop recovery wizard lists backups (timestamps + item counts) and restores a selected backup, preserving the current vault as `.corrupt`.
 - [x] M9 slice complete: desktop settings screen (auto-lock minutes, lock on suspend, clipboard timeout, reveal confirm toggle, log level) backed by XDG `config.toml` and wired into auto-lock/clipboard behavior.
+- [x] M9 slice complete: desktop login password reveal action (optional confirmation) with 30s auto-hide and copy UX that reflects clipboard timeout.

@@ -43,6 +43,8 @@
   let settingsLogLevel = 'info'
   let settingsSaving = false
   let settingsError = ''
+  let revealedPassword = null
+  let revealPasswordTimeoutId = null
 
   onMount(async () => {
     try {
@@ -83,6 +85,7 @@
       recoveryBusy = false
       recoveryError = ''
       settingsError = ''
+      clearRevealedPassword()
       lastResult = `Vault locked (${reason})`
     })
 
@@ -191,6 +194,14 @@
     }
   }
 
+  const clearRevealedPassword = () => {
+    revealedPassword = null
+    if (revealPasswordTimeoutId) {
+      clearTimeout(revealPasswordTimeoutId)
+      revealPasswordTimeoutId = null
+    }
+  }
+
   const recoverFromSelectedBackup = async () => {
     if (!recoveryVaultPath || !recoverySelectedBackupPath) {
       return
@@ -240,6 +251,7 @@
       totpQrVisible = false
       clearTotpInterval()
       closeRecoveryWizard()
+      clearRevealedPassword()
       lastResult = 'Vault locked'
     } catch (error) {
       lastResult = formatError(error)
@@ -430,6 +442,7 @@
   }
 
   const selectItem = async (item) => {
+    clearRevealedPassword()
     selectedItem = item
     loginDetail = null
     noteDetail = null
@@ -492,7 +505,11 @@
     }
     try {
       await window.npw.loginCopyUsername({ id: selectedItem.id })
-      lastResult = 'Copied username to clipboard'
+      const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
+      lastResult =
+        Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+          ? `Copied username to clipboard (auto-clears in ${timeoutSeconds}s)`
+          : 'Copied username to clipboard (auto-clear disabled)'
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -504,10 +521,42 @@
     }
     try {
       await window.npw.loginCopyPassword({ id: selectedItem.id })
-      lastResult = 'Copied password to clipboard (auto-clears)'
+      const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
+      lastResult =
+        Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+          ? `Copied password to clipboard (auto-clears in ${timeoutSeconds}s)`
+          : 'Copied password to clipboard (auto-clear disabled)'
     } catch (error) {
       lastResult = formatError(error)
     }
+  }
+
+  const revealPassword = async () => {
+    if (!selectedItem) {
+      return
+    }
+    if (settingsRevealRequiresConfirm) {
+      const confirmed = confirm('Reveal password for 30 seconds?')
+      if (!confirmed) {
+        return
+      }
+    }
+    try {
+      const password = await window.npw.loginRevealPassword({ id: selectedItem.id })
+      clearRevealedPassword()
+      revealedPassword = password
+      revealPasswordTimeoutId = setTimeout(() => {
+        revealedPassword = null
+        revealPasswordTimeoutId = null
+      }, 30_000)
+      lastResult = 'Password revealed for 30 seconds'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const hidePassword = () => {
+    clearRevealedPassword()
   }
 
   const copyTotp = async () => {
@@ -516,7 +565,11 @@
     }
     try {
       await window.npw.loginCopyTotp({ id: selectedItem.id })
-      lastResult = 'Copied TOTP to clipboard (auto-clears)'
+      const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
+      lastResult =
+        Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+          ? `Copied TOTP to clipboard (auto-clears in ${timeoutSeconds}s)`
+          : 'Copied TOTP to clipboard (auto-clear disabled)'
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -800,8 +853,21 @@
       <div class="field">
         <div class="label">Password</div>
         <div class="inline">
-          <span>{loginDetail.hasPassword ? '••••••••' : '(none)'}</span>
+          <span class:mono={revealedPassword != null}>
+            {#if revealedPassword != null}
+              {revealedPassword}
+            {:else}
+              {loginDetail.hasPassword ? '••••••••' : '(none)'}
+            {/if}
+          </span>
           <button on:click={copyPassword} disabled={!loginDetail.hasPassword}>Copy</button>
+          {#if loginDetail.hasPassword}
+            {#if revealedPassword != null}
+              <button class="secondary" type="button" on:click={hidePassword}>Hide</button>
+            {:else}
+              <button class="secondary" type="button" on:click={revealPassword}>Reveal</button>
+            {/if}
+          {/if}
         </div>
       </div>
 
