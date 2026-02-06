@@ -159,6 +159,8 @@ contextBridge.exposeInMainWorld('npw', {
   loginGet: (payload: { id: string }): Promise<LoginDetail> => ipcRenderer.invoke('item.login.get', payload),
   noteGet: (payload: { id: string }): Promise<NoteDetail> => ipcRenderer.invoke('item.note.get', payload),
   passkeyRefGet: (payload: { id: string }): Promise<PasskeyRefDetail> => ipcRenderer.invoke('item.passkey.get', payload),
+  passkeyRefUpdate: (payload: { id: string; title: string; notes?: string | null }): Promise<boolean> =>
+    ipcRenderer.invoke('item.passkey.update', payload),
   passkeyOpenSite: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.passkey.open-site', payload),
   passkeyOpenManager: (): Promise<boolean> => ipcRenderer.invoke('passkey.open-manager'),
   noteAdd: (payload: { title: string; body: string }): Promise<string> => ipcRenderer.invoke('item.note.add', payload),

@@ -160,6 +160,12 @@ type UpdateLoginInput = {
   notes?: string | null
 }
 
+type UpdatePasskeyRefInput = {
+  id: string
+  title: string
+  notes?: string | null
+}
+
 type VaultSession = {
   status: () => VaultStatus
   listItems: (query?: string | null) => ItemSummary[]
@@ -173,6 +179,7 @@ type VaultSession = {
   setLoginTotp: (id: string, value: string) => boolean
   getNote: (id: string) => NoteDetail
   getPasskeyRef: (id: string) => PasskeyRefDetail
+  updatePasskeyRef: (input: UpdatePasskeyRefInput) => boolean
   addNote: (title: string, body: string) => string
   updateNote: (id: string, title: string, body: string) => boolean
   addLogin: (input: AddLoginInput) => string
@@ -401,6 +408,27 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     return session.getPasskeyRef(safeId)
+  })
+
+  ipcMain.handle('item.passkey.update', (_event, payload: UpdatePasskeyRefInput) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const safeTitle = validateText(payload.title, 'title', 256)
+    const notes = payload.notes
+    if (notes != null && typeof notes !== 'string') {
+      throw new Error('notes must be a string')
+    }
+    if (typeof notes === 'string' && notes.length > 100_000) {
+      throw new Error('notes is too long')
+    }
+
+    return session.updatePasskeyRef({
+      id: safeId,
+      title: safeTitle,
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
+    })
   })
 
   ipcMain.handle('item.passkey.open-site', async (_event, payload: { id: string }) => {

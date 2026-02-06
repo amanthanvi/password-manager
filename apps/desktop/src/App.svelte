@@ -15,6 +15,10 @@
   let loginDetail = null
   let noteDetail = null
   let passkeyDetail = null
+  let passkeyEditTitle = ''
+  let passkeyEditNotes = ''
+  let passkeyEditBusy = false
+  let passkeyEditError = ''
   let totp = null
   let totpInterval = null
   let totpQrUrl = null
@@ -125,6 +129,10 @@
       noteEditBusy = false
       noteEditError = ''
       passkeyDetail = null
+      passkeyEditTitle = ''
+      passkeyEditNotes = ''
+      passkeyEditBusy = false
+      passkeyEditError = ''
       totp = null
       totpQrUrl = null
       totpQrVisible = false
@@ -324,6 +332,10 @@
       noteEditBusy = false
       noteEditError = ''
       passkeyDetail = null
+      passkeyEditTitle = ''
+      passkeyEditNotes = ''
+      passkeyEditBusy = false
+      passkeyEditError = ''
       totp = null
       totpQrUrl = null
       totpQrVisible = false
@@ -599,6 +611,36 @@
     }
   }
 
+  const updatePasskeyRef = async () => {
+    if (!passkeyDetail) {
+      return
+    }
+
+    const id = passkeyDetail.id
+    passkeyEditBusy = true
+    passkeyEditError = ''
+    try {
+      await window.npw.passkeyRefUpdate({
+        id,
+        title: passkeyEditTitle,
+        notes: passkeyEditNotes.length > 0 ? passkeyEditNotes : null
+      })
+      await refreshItems()
+      const refreshed = items.find((item) => item.id === id)
+      if (refreshed) {
+        await selectItem(refreshed)
+      }
+      lastResult = `Updated passkey reference ${id}`
+      pushToast({ kind: 'success', title: 'Updated passkey reference', timeoutMs: 3500 })
+    } catch (error) {
+      passkeyEditError = formatError(error)
+      lastResult = passkeyEditError
+      pushToast({ kind: 'error', title: 'Update passkey failed', detail: passkeyEditError })
+    } finally {
+      passkeyEditBusy = false
+    }
+  }
+
   const deleteSelectedItem = async () => {
     if (!selectedItem) {
       return
@@ -684,6 +726,10 @@
 
       if (item.itemType === 'passkey_ref') {
         passkeyDetail = await window.npw.passkeyRefGet({ id: itemId })
+        passkeyEditTitle = passkeyDetail.title
+        passkeyEditNotes = passkeyDetail.notes ?? ''
+        passkeyEditError = ''
+        passkeyEditBusy = false
         lastResult = `Loaded item ${itemId}`
         return
       }
@@ -1390,10 +1436,22 @@
       <p class="muted">{passkeyDetail.id}</p>
       <p class="callout">This app does not store passkeys. This is a reference entry.</p>
       <div class="actions">
+        <button
+          type="button"
+          on:click={updatePasskeyRef}
+          disabled={passkeyEditBusy || passkeyEditTitle.trim().length === 0}
+        >
+          {passkeyEditBusy ? 'Saving…' : 'Save'}
+        </button>
         <button on:click={openPasskeySite}>Open Site</button>
         <button on:click={openPasskeyManager}>Open Passkey Manager</button>
         <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
       </div>
+
+      <label>
+        Title
+        <input bind:value={passkeyEditTitle} disabled={passkeyEditBusy} />
+      </label>
 
       <div class="field">
         <div class="label">Relying Party ID</div>
@@ -1419,11 +1477,13 @@
         <pre class="note mono">{passkeyDetail.credentialIdHex}</pre>
       </div>
 
-      {#if passkeyDetail.notes}
-        <div class="field">
-          <div class="label">Notes</div>
-          <pre class="note">{passkeyDetail.notes}</pre>
-        </div>
+      <label>
+        Notes
+        <textarea bind:value={passkeyEditNotes} rows="6" disabled={passkeyEditBusy}></textarea>
+      </label>
+
+      {#if passkeyEditError}
+        <p class="callout">{passkeyEditError}</p>
       {/if}
     </section>
   {/if}

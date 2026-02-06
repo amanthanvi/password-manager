@@ -315,6 +315,13 @@ pub struct UpdateLoginInput {
     pub notes: Option<String>,
 }
 
+#[napi(object)]
+pub struct UpdatePasskeyRefInput {
+    pub id: String,
+    pub title: String,
+    pub notes: Option<String>,
+}
+
 #[napi]
 pub struct VaultSession {
     path: String,
@@ -682,6 +689,35 @@ impl VaultSession {
             .and_then(|value| if value.is_empty() { None } else { Some(value) });
         login.updated_at = now;
         login
+            .validate()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.payload.updated_at = now;
+        self.payload.rebuild_search_index();
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(true)
+    }
+
+    #[napi]
+    pub fn update_passkey_ref(&mut self, input: UpdatePasskeyRefInput) -> Result<bool> {
+        let now = unix_seconds_now();
+        let index = self
+            .payload
+            .items
+            .iter()
+            .position(|item| item.id() == input.id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+
+        let VaultItem::PasskeyRef(passkey) = &mut self.payload.items[index] else {
+            return Err(error_to_napi("item is not a passkey reference".to_owned()));
+        };
+
+        passkey.title = input.title;
+        passkey.notes = input
+            .notes
+            .and_then(|value| if value.is_empty() { None } else { Some(value) });
+        passkey.updated_at = now;
+        passkey
             .validate()
             .map_err(|error| error_to_napi(error.to_string()))?;
         self.payload.updated_at = now;
