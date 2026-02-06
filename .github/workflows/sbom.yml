@@ -5,9 +5,12 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   generate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -15,7 +18,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 23
           cache: pnpm
 
       - name: Setup pnpm
@@ -40,10 +43,28 @@ jobs:
       - name: Generate npm SBOM
         run: pnpm dlx @cyclonedx/cdxgen -o sbom-npm.cdx.json --type npm
 
+      - name: Archive Rust SBOMs for release upload
+        run: |
+          shopt -s globstar nullglob
+          files=(**/sbom-rust.json)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Rust SBOM files found" >&2
+            exit 1
+          fi
+          zip -q -r sbom-rust.zip "${files[@]}"
+
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: |
             **/sbom-rust.json
+            sbom-npm.cdx.json
+
+      - name: Upload SBOMs to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom-rust.zip
             sbom-npm.cdx.json
