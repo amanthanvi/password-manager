@@ -4,7 +4,8 @@ use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
     CreateVaultInput, KdfParams, VaultItem, VaultPayload, assess_master_password,
-    create_vault_file, parse_vault_header, unlock_vault_file, unlock_vault_file_with_kek,
+    create_vault_file, generate_totp, parse_vault_header, unlock_vault_file,
+    unlock_vault_file_with_kek,
 };
 use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault};
 use zeroize::Zeroize;
@@ -109,6 +110,13 @@ pub struct LoginDetail {
     pub tags: Vec<String>,
 }
 
+#[napi(object)]
+pub struct TotpCode {
+    pub code: String,
+    pub period: u16,
+    pub remaining: u16,
+}
+
 #[napi]
 pub struct VaultSession {
     path: String,
@@ -185,6 +193,33 @@ impl VaultSession {
             .password
             .clone()
             .ok_or_else(|| error_to_napi("login item has no password".to_owned()))
+    }
+
+    #[napi]
+    pub fn get_login_totp(&self, id: String) -> Result<TotpCode> {
+        let item = self
+            .payload
+            .get_item(&id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+        let VaultItem::Login(login) = item else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+        let config = login
+            .totp
+            .as_ref()
+            .ok_or_else(|| error_to_napi("login item has no TOTP".to_owned()))?;
+
+        let now = unix_seconds_now();
+        let code = generate_totp(config, now).map_err(|error| error_to_napi(error.to_string()))?;
+        let period_seconds = u64::from(config.period);
+        let remaining_seconds = period_seconds - (now % period_seconds);
+        let remaining = u16::try_from(remaining_seconds).unwrap_or(config.period);
+
+        Ok(TotpCode {
+            code,
+            period: config.period,
+            remaining,
+        })
     }
 
     #[napi]

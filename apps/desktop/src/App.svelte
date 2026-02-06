@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { APP_TITLE, formatStatus } from './lib/app'
 
   let vaultPath = '/tmp/npw-desktop.npw'
@@ -12,6 +12,8 @@
   let items = []
   let selectedItem = null
   let loginDetail = null
+  let totp = null
+  let totpInterval = null
 
   onMount(async () => {
     try {
@@ -20,6 +22,10 @@
     } catch (error) {
       bridgeStatus = formatStatus(formatError(error))
     }
+  })
+
+  onDestroy(() => {
+    clearTotpInterval()
   })
 
   const createVault = async () => {
@@ -54,6 +60,10 @@
       await window.npw.vaultLock()
       status = null
       items = []
+      selectedItem = null
+      loginDetail = null
+      totp = null
+      clearTotpInterval()
       lastResult = 'Vault locked'
     } catch (error) {
       lastResult = formatError(error)
@@ -66,6 +76,8 @@
       if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
         selectedItem = null
         loginDetail = null
+        totp = null
+        clearTotpInterval()
       }
       lastResult = `Loaded ${items.length} items`
     } catch (error) {
@@ -76,6 +88,8 @@
   const selectItem = async (item) => {
     selectedItem = item
     loginDetail = null
+    totp = null
+    clearTotpInterval()
     if (!item) {
       return
     }
@@ -83,9 +97,29 @@
       lastResult = `Item type ${item.itemType} detail view not implemented yet`
       return
     }
+    const itemId = item.id
     try {
-      loginDetail = await window.npw.loginGet({ id: item.id })
-      lastResult = `Loaded item ${item.id}`
+      loginDetail = await window.npw.loginGet({ id: itemId })
+      lastResult = `Loaded item ${itemId}`
+      if (loginDetail.hasTotp) {
+        await refreshTotp(itemId)
+        totpInterval = setInterval(async () => {
+          if (!selectedItem || selectedItem.id !== itemId) {
+            clearTotpInterval()
+            return
+          }
+          try {
+            if (totp && totp.remaining > 1) {
+              totp = { ...totp, remaining: totp.remaining - 1 }
+              return
+            }
+            await refreshTotp(itemId)
+          } catch {
+            totp = null
+            clearTotpInterval()
+          }
+        }, 1000)
+      }
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -112,6 +146,29 @@
       lastResult = 'Copied password to clipboard (auto-clears)'
     } catch (error) {
       lastResult = formatError(error)
+    }
+  }
+
+  const copyTotp = async () => {
+    if (!selectedItem) {
+      return
+    }
+    try {
+      await window.npw.loginCopyTotp({ id: selectedItem.id })
+      lastResult = 'Copied TOTP to clipboard (auto-clears)'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const refreshTotp = async (id) => {
+    totp = await window.npw.loginTotpGet({ id })
+  }
+
+  const clearTotpInterval = () => {
+    if (totpInterval) {
+      clearInterval(totpInterval)
+      totpInterval = null
     }
   }
 
@@ -219,6 +276,21 @@
           <button on:click={copyPassword} disabled={!loginDetail.hasPassword}>Copy</button>
         </div>
       </div>
+
+      {#if loginDetail.hasTotp}
+        <div class="field">
+          <div class="label">TOTP</div>
+          {#if totp}
+            <div class="inline">
+              <span class="totp">{totp.code}</span>
+              <span class="muted">{totp.remaining}s</span>
+              <button on:click={copyTotp}>Copy</button>
+            </div>
+          {:else}
+            <div class="muted">(loading...)</div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="field">
         <div class="label">URLs</div>
@@ -355,6 +427,11 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+
+  .totp {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
   }
 
   .urls {

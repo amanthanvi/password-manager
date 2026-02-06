@@ -35,6 +35,12 @@ type LoginDetail = {
   tags: string[]
 }
 
+type TotpCode = {
+  code: string
+  period: number
+  remaining: number
+}
+
 contextBridge.exposeInMainWorld('npw', {
   coreBanner: (): Promise<string> => ipcRenderer.invoke('core.banner'),
   vaultCreate: (payload: { path: string; masterPassword: string; label?: string }): Promise<boolean> =>
@@ -51,4 +57,6 @@ contextBridge.exposeInMainWorld('npw', {
     ipcRenderer.invoke('item.login.copy-username', payload),
   loginCopyPassword: (payload: { id: string }): Promise<boolean> =>
     ipcRenderer.invoke('item.login.copy-password', payload),
+  loginTotpGet: (payload: { id: string }): Promise<TotpCode> => ipcRenderer.invoke('item.login.totp.get', payload),
+  loginCopyTotp: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.login.copy-totp', payload),
 })

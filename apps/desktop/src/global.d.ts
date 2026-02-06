@@ -34,6 +34,12 @@ declare global {
     tags: string[]
   }
 
+  interface TotpCode {
+    code: string
+    period: number
+    remaining: number
+  }
+
   interface Window {
     npw: {
       coreBanner: () => Promise<string>
@@ -46,6 +52,8 @@ declare global {
       loginGet: (payload: { id: string }) => Promise<LoginDetail>
       loginCopyUsername: (payload: { id: string }) => Promise<boolean>
       loginCopyPassword: (payload: { id: string }) => Promise<boolean>
+      loginTotpGet: (payload: { id: string }) => Promise<TotpCode>
+      loginCopyTotp: (payload: { id: string }) => Promise<boolean>
     }
   }
 }

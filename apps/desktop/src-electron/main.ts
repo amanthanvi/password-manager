@@ -45,12 +45,19 @@ type LoginDetail = {
   tags: string[]
 }
 
+type TotpCode = {
+  code: string
+  period: number
+  remaining: number
+}
+
 type VaultSession = {
   status: () => VaultStatus
   listItems: (query?: string | null) => ItemSummary[]
   lock: () => void
   getLogin: (id: string) => LoginDetail
   getLoginPassword: (id: string) => string
+  getLoginTotp: (id: string) => TotpCode
 }
 
 type AddonApi = {
@@ -169,6 +176,24 @@ function registerIpcHandlers(api: AddonApi) {
     const safeId = validateText(payload.id, 'id', 128)
     const password = session.getLoginPassword(safeId)
     clipboardSetWithAutoClear(password, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
+    return true
+  })
+
+  ipcMain.handle('item.login.totp.get', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.getLoginTotp(safeId)
+  })
+
+  ipcMain.handle('item.login.copy-totp', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const code = session.getLoginTotp(safeId)
+    clipboardSetWithAutoClear(code.code, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
     return true
   })
 

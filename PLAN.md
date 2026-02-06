@@ -117,3 +117,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M8 slice complete: derived-key vault unlock (KEK) support + addon `VaultSession` and desktop unlock + item list UI (no secrets in renderer).
 - [x] M9 slice complete: desktop login item detail view + copy username/password actions (clipboard auto-clear).
 - [x] M9 slice complete: desktop holds an exclusive vault lock for the unlock session (prevents concurrent CLI writes; acceptance Scenario 5).
+- [x] M9 slice complete: desktop renders login TOTP codes with countdown + copy action (auto-clears).
