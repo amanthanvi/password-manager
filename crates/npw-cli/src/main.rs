@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode, Stdio};
 use std::sync::OnceLock;
@@ -3518,13 +3519,21 @@ fn config_get(config: &AppConfig, key: &str) -> Option<String> {
 fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliError> {
     match key {
         "default_vault" => {
-            config.default_vault = Some(value.to_owned());
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(CliError::usage("default_vault cannot be empty"));
+            }
+            config.default_vault = Some(trimmed.to_owned());
         }
         "security.clipboard_timeout_seconds" => {
-            config.security.clipboard_timeout_seconds = parse_u32(key, value)?;
+            let parsed = parse_u32(key, value)?;
+            validate_u32_allow_zero(key, parsed, 10..=90)?;
+            config.security.clipboard_timeout_seconds = parsed;
         }
         "security.auto_lock_minutes" => {
-            config.security.auto_lock_minutes = parse_u32(key, value)?;
+            let parsed = parse_u32(key, value)?;
+            validate_u32_range(key, parsed, 1..=60)?;
+            config.security.auto_lock_minutes = parsed;
         }
         "security.lock_on_suspend" => {
             config.security.lock_on_suspend = parse_bool(key, value)?;
@@ -3533,7 +3542,7 @@ fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliE
             config.security.reveal_requires_confirm = parse_bool(key, value)?;
         }
         "generator.default_mode" => {
-            config.generator.default_mode = match value {
+            config.generator.default_mode = match value.trim() {
                 "charset" => GenerateMode::Charset,
                 "diceware" => GenerateMode::Diceware,
                 _ => {
@@ -3544,7 +3553,9 @@ fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliE
             };
         }
         "generator.charset_length" => {
-            config.generator.charset_length = parse_usize(key, value)?;
+            let parsed = parse_usize(key, value)?;
+            validate_usize_range(key, parsed, 8..=128)?;
+            config.generator.charset_length = parsed;
         }
         "generator.charset_uppercase" => {
             config.generator.charset_uppercase = parse_bool(key, value)?;
@@ -3562,7 +3573,9 @@ fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliE
             config.generator.charset_avoid_ambiguous = parse_bool(key, value)?;
         }
         "generator.diceware_words" => {
-            config.generator.diceware_words = parse_usize(key, value)?;
+            let parsed = parse_usize(key, value)?;
+            validate_usize_range(key, parsed, 4..=10)?;
+            config.generator.diceware_words = parsed;
         }
         "generator.diceware_separator" => {
             if value.chars().count() != 1 {
@@ -3572,8 +3585,8 @@ fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliE
             }
             config.generator.diceware_separator = value.to_owned();
         }
-        "logging.level" => match value {
-            "error" | "warn" | "info" | "debug" => config.logging.level = value.to_owned(),
+        "logging.level" => match value.trim() {
+            "error" | "warn" | "info" | "debug" => config.logging.level = value.trim().to_owned(),
             _ => {
                 return Err(CliError::usage(
                     "logging.level must be error|warn|info|debug",
@@ -3581,7 +3594,11 @@ fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliE
             }
         },
         "backup.max_retained" => {
-            config.backup.max_retained = parse_usize(key, value)?;
+            let parsed = parse_usize(key, value)?;
+            if parsed == 0 {
+                return Err(CliError::usage("backup.max_retained must be > 0"));
+            }
+            config.backup.max_retained = parsed;
         }
         _ => return Err(CliError::usage("unknown config key")),
     }
@@ -3591,20 +3608,62 @@ fn config_set(config: &mut AppConfig, key: &str, value: &str) -> Result<(), CliE
 
 fn parse_u32(key: &str, value: &str) -> Result<u32, CliError> {
     value
+        .trim()
         .parse::<u32>()
         .map_err(|_| CliError::usage(format!("invalid u32 value for {key}")))
 }
 
 fn parse_usize(key: &str, value: &str) -> Result<usize, CliError> {
     value
+        .trim()
         .parse::<usize>()
         .map_err(|_| CliError::usage(format!("invalid usize value for {key}")))
 }
 
 fn parse_bool(key: &str, value: &str) -> Result<bool, CliError> {
     value
+        .trim()
         .parse::<bool>()
         .map_err(|_| CliError::usage(format!("invalid bool value for {key}")))
+}
+
+fn validate_u32_range(key: &str, value: u32, allowed: RangeInclusive<u32>) -> Result<(), CliError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(CliError::usage(format!(
+            "{key} out of bounds: {value} (expected {}..={})",
+            allowed.start(),
+            allowed.end()
+        )))
+    }
+}
+
+fn validate_u32_allow_zero(
+    key: &str,
+    value: u32,
+    allowed: RangeInclusive<u32>,
+) -> Result<(), CliError> {
+    if value == 0 {
+        return Ok(());
+    }
+    validate_u32_range(key, value, allowed)
+}
+
+fn validate_usize_range(
+    key: &str,
+    value: usize,
+    allowed: RangeInclusive<usize>,
+) -> Result<(), CliError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(CliError::usage(format!(
+            "{key} out of bounds: {value} (expected {}..={})",
+            allowed.start(),
+            allowed.end()
+        )))
+    }
 }
 
 fn normalize_tags(raw_tags: &[String]) -> Vec<String> {
@@ -3842,8 +3901,8 @@ fn diceware_words() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload, map_storage_error,
-        scrub_log_value,
+        AppConfig, config_set, decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload,
+        map_storage_error, scrub_log_value,
     };
     use npw_core::KdfParams;
     use npw_storage::StorageError;
@@ -3895,5 +3954,18 @@ mod tests {
         let super::CliError { code, message, .. } = error;
         assert!(matches!(code, super::CliExitCode::VaultFileLocked));
         assert_eq!(message, "vault file locked by another process");
+    }
+
+    #[test]
+    fn config_set_rejects_out_of_bounds_values() {
+        let mut config = AppConfig::default();
+
+        assert!(config_set(&mut config, "security.clipboard_timeout_seconds", "0").is_ok());
+        assert!(config_set(&mut config, "security.clipboard_timeout_seconds", "9").is_err());
+        assert!(config_set(&mut config, "security.auto_lock_minutes", "0").is_err());
+        assert!(config_set(&mut config, "generator.charset_length", "7").is_err());
+        assert!(config_set(&mut config, "generator.diceware_words", "3").is_err());
+        assert!(config_set(&mut config, "backup.max_retained", "0").is_err());
+        assert!(config_set(&mut config, "default_vault", "   ").is_err());
     }
 }

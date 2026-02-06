@@ -129,3 +129,14 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop settings screen (auto-lock minutes, lock on suspend, clipboard timeout, reveal confirm toggle, log level) backed by XDG `config.toml` and wired into auto-lock/clipboard behavior.
 - [x] M9 slice complete: desktop login password reveal action (optional confirmation) with 30s auto-hide and copy UX that reflects clipboard timeout.
 - [x] M9 slice complete: desktop login password "Generate & Replace" action using the configured generator defaults.
+
+## 6. Remaining v0.1.0 Blockers (MUST)
+
+- [ ] GUI: implement toast + retry error UX (SPEC K12) and use toasts for copy actions (SPEC K6/D4).
+- [ ] GUI: implement TOTP QR import with camera scan and paste fallback (SPEC K10).
+- [ ] GUI: implement Import/Export screen (SPEC K1.7) including duplicate resolution UX for CSV/Bitwarden JSON imports (SPEC S1 Scenario 2).
+- [ ] GUI: implement full Add/Edit item flows (SPEC K9) including URL match type badges and tag normalization.
+- [ ] Desktop security: add production CSP with `connect-src 'none'` (SPEC I2) and ensure networking is disabled by default.
+- [ ] CLI: enforce config `set` validation bounds (SPEC J6) to match desktop/addon behavior.
+- [ ] QA/release gates: add fuzz targets + coverage measurement + Playwright smoke tests in CI (SPEC O2–O5).
+- [ ] Release: add packaging/signing workflow scaffolds and checksum publication for GitHub releases (SPEC P1–P4).
