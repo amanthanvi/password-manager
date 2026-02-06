@@ -3,6 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@10.28.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
   "scripts": {
     "lint": "pnpm --filter desktop lint && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
     "typecheck": "pnpm --filter desktop typecheck && cargo check --workspace --all-targets",
