@@ -5,9 +5,11 @@
   let vaultPath = '/tmp/npw-desktop.npw'
   let vaultLabel = 'Desktop Vault'
   let masterPassword = ''
+  let query = ''
   let bridgeStatus = 'initializing'
   let lastResult = ''
   let status = null
+  let items = []
 
   onMount(async () => {
     try {
@@ -26,28 +28,40 @@
         label: vaultLabel
       })
       lastResult = `Created vault at ${vaultPath}`
-      await loadStatus()
     } catch (error) {
       lastResult = formatError(error)
     }
   }
 
-  const loadStatus = async () => {
+  const unlockVault = async () => {
     try {
-      status = await window.npw.vaultStatus({ path: vaultPath })
-      lastResult = `Loaded status for ${status.path}`
-    } catch (error) {
-      lastResult = formatError(error)
-    }
-  }
-
-  const checkVault = async () => {
-    try {
-      status = await window.npw.vaultCheck({
+      status = await window.npw.vaultUnlock({
         path: vaultPath,
         masterPassword
       })
-      lastResult = `Vault check passed for ${status.path}`
+      masterPassword = ''
+      lastResult = `Vault unlocked: ${status.path}`
+      await refreshItems()
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const lockVault = async () => {
+    try {
+      await window.npw.vaultLock()
+      status = null
+      items = []
+      lastResult = 'Vault locked'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const refreshItems = async () => {
+    try {
+      items = await window.npw.itemList({ query: query.length > 0 ? query : null })
+      lastResult = `Loaded ${items.length} items`
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -82,14 +96,52 @@
 
   <div class="actions">
     <button on:click={createVault}>Create Vault</button>
-    <button on:click={loadStatus}>Load Status</button>
-    <button on:click={checkVault}>Check Vault</button>
+    <button on:click={unlockVault}>Unlock Vault</button>
+    <button on:click={lockVault} disabled={!status}>Lock Vault</button>
   </div>
 
-  <p>{lastResult}</p>
+  <label>
+    Search
+    <input bind:value={query} on:input={refreshItems} disabled={!status} />
+  </label>
+
+  <div class="actions">
+    <button on:click={refreshItems} disabled={!status}>Refresh Items</button>
+  </div>
+
+  <pre class="result">{lastResult}</pre>
 
   {#if status}
     <pre>{JSON.stringify(status, null, 2)}</pre>
+  {/if}
+
+  {#if status}
+    <section class="items">
+      <h2>Items</h2>
+      {#if items.length === 0}
+        <p class="muted">No items found.</p>
+      {:else}
+        <ul>
+          {#each items as item (item.id)}
+            <li>
+              <strong>{item.title}</strong>
+              <span class="meta">
+                {item.itemType}
+                {#if item.subtitle}
+                  · {item.subtitle}
+                {/if}
+                {#if item.url}
+                  · {item.url}
+                {/if}
+                {#if item.hasTotp}
+                  · TOTP
+                {/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
   {/if}
 </main>
 
@@ -137,5 +189,30 @@
     padding: 0.75rem;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .result {
+    min-height: 3.5rem;
+  }
+
+  .items h2 {
+    margin: 0;
+  }
+
+  .items ul {
+    margin: 0;
+    padding-left: 1.25rem;
+  }
+
+  .meta {
+    display: block;
+    font-size: 0.9rem;
+    opacity: 0.75;
+    margin-top: 0.15rem;
+  }
+
+  .muted {
+    opacity: 0.75;
+    margin: 0;
   }
 </style>

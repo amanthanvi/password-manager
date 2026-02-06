@@ -13,3 +13,4 @@ napi.workspace = true
 napi-derive.workspace = true
 npw-core = { path = "../npw-core" }
 npw-storage = { path = "../npw-storage" }
+zeroize.workspace = true

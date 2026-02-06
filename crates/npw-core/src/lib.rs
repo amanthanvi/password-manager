@@ -36,6 +36,8 @@ pub use totp::{
     TotpError, decode_base32_secret, generate_totp, generate_totp_now, parse_otpauth_uri,
 };
 pub use vault::{
-    CreateVaultInput, EnvelopePlaintext, KdfParams, ReencryptVaultInput, UnlockedVault, VaultError,
-    VaultHeader, create_vault_file, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
+    CreateVaultInput, EnvelopePlaintext, KdfParams, ReencryptVaultInput, UnlockedVault,
+    UnlockedVaultWithKek, VaultError, VaultHeader, create_vault_file, parse_vault_header,
+    reencrypt_vault_file, reencrypt_vault_file_with_kek, unlock_vault_file,
+    unlock_vault_file_with_kek,
 };

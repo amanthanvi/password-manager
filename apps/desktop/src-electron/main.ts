@@ -16,11 +16,30 @@ type VaultStatus = {
   kdfParallelism: number
 }
 
+type ItemSummary = {
+  id: string
+  itemType: string
+  title: string
+  subtitle: string | null
+  url: string | null
+  favorite: boolean
+  hasTotp: boolean
+  updatedAt: number
+  tags: string[]
+}
+
+type VaultSession = {
+  status: () => VaultStatus
+  listItems: (query?: string | null) => ItemSummary[]
+  lock: () => void
+}
+
 type AddonApi = {
   coreBanner: () => string
   vaultCreate: (path: string, masterPassword: string, vaultLabel?: string | null) => void
   vaultStatus: (path: string) => VaultStatus
   vaultCheck: (path: string, masterPassword: string) => VaultStatus
+  vaultUnlock: (path: string, masterPassword: string) => VaultSession
 }
 
 const addon = loadAddon()
@@ -62,6 +81,8 @@ app.on('window-all-closed', () => {
 })
 
 function registerIpcHandlers(api: AddonApi) {
+  let session: VaultSession | null = null
+
   ipcMain.handle('core.banner', () => api.coreBanner())
   ipcMain.handle('vault.create', (_event, payload: { path: string; masterPassword: string; label?: string }) => {
     const safePath = validateText(payload.path, 'path', 4096)
@@ -79,6 +100,26 @@ function registerIpcHandlers(api: AddonApi) {
     const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
     return api.vaultCheck(safePath, safePassword)
   })
+  ipcMain.handle('vault.unlock', (_event, payload: { path: string; masterPassword: string }) => {
+    const safePath = validateText(payload.path, 'path', 4096)
+    const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
+    session = api.vaultUnlock(safePath, safePassword)
+    return session.status()
+  })
+  ipcMain.handle('vault.lock', () => {
+    if (session) {
+      session.lock()
+      session = null
+    }
+    return true
+  })
+  ipcMain.handle('item.list', (_event, payload: { query?: string | null }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const query = payload?.query ? validateOptionalText(payload.query, 'query', 256) : null
+    return session.listItems(query)
+  })
 }
 
 function validateText(value: string, field: string, maxLen: number): string {
@@ -89,6 +130,17 @@ function validateText(value: string, field: string, maxLen: number): string {
   if (trimmed.length === 0) {
     throw new Error(`${field} cannot be empty`)
   }
+  if (trimmed.length > maxLen) {
+    throw new Error(`${field} is too long`)
+  }
+  return trimmed
+}
+
+function validateOptionalText(value: string, field: string, maxLen: number): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${field} must be a string`)
+  }
+  const trimmed = value.trim()
   if (trimmed.length > maxLen) {
     throw new Error(`${field} is too long`)
   }

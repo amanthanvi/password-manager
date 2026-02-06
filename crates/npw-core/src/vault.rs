@@ -115,6 +115,29 @@ pub struct UnlockedVault {
     pub payload_plaintext: Vec<u8>,
 }
 
+#[derive(Debug)]
+pub struct UnlockedVaultWithKek {
+    pub header: VaultHeader,
+    pub envelope: EnvelopePlaintext,
+    pub payload_plaintext: Vec<u8>,
+    kek: [u8; KEY_LEN],
+}
+
+impl UnlockedVaultWithKek {
+    #[must_use]
+    pub fn kek(&self) -> &[u8; KEY_LEN] {
+        &self.kek
+    }
+}
+
+impl Drop for UnlockedVaultWithKek {
+    fn drop(&mut self) {
+        self.kek.zeroize();
+        self.envelope.vault_key.zeroize();
+        self.payload_plaintext.zeroize();
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum VaultError {
     #[error("invalid header: {0}")]
@@ -190,6 +213,25 @@ pub fn reencrypt_vault_file(input: &ReencryptVaultInput<'_>) -> Result<Vec<u8>, 
     )
 }
 
+pub fn reencrypt_vault_file_with_kek(
+    kek: &[u8; KEY_LEN],
+    payload_plaintext: &[u8],
+    item_count: u32,
+    header: &VaultHeader,
+    envelope: &EnvelopePlaintext,
+) -> Result<Vec<u8>, VaultError> {
+    header.kdf_params.validate()?;
+    build_vault_file_with_kek(
+        kek,
+        payload_plaintext,
+        item_count,
+        &header.vault_label,
+        header.kdf_params,
+        &header.salt,
+        envelope,
+    )
+}
+
 fn build_vault_file(
     master_password: &str,
     payload_plaintext: &[u8],
@@ -203,10 +245,39 @@ fn build_vault_file(
         return Err(VaultError::LabelTooLong);
     }
 
-    let env_nonce = random_bytes::<NONCE_LEN>()?;
-    let payload_nonce = random_bytes::<NONCE_LEN>()?;
     let mut kdf_key = derive_kdf_key(master_password, salt, kdf_params)?;
     let mut kek = derive_hkdf(&kdf_key, b"NPW:v1:KEK")?;
+    let file_bytes = build_vault_file_with_kek(
+        &kek,
+        payload_plaintext,
+        item_count,
+        vault_label,
+        kdf_params,
+        salt,
+        envelope,
+    );
+
+    kdf_key.zeroize();
+    kek.zeroize();
+
+    file_bytes
+}
+
+fn build_vault_file_with_kek(
+    kek: &[u8; KEY_LEN],
+    payload_plaintext: &[u8],
+    item_count: u32,
+    vault_label: &str,
+    kdf_params: KdfParams,
+    salt: &[u8; SALT_LEN],
+    envelope: &EnvelopePlaintext,
+) -> Result<Vec<u8>, VaultError> {
+    if vault_label.len() > MAX_LABEL_BYTES {
+        return Err(VaultError::LabelTooLong);
+    }
+
+    let env_nonce = random_bytes::<NONCE_LEN>()?;
+    let payload_nonce = random_bytes::<NONCE_LEN>()?;
     let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
     let envelope_plaintext = to_cbor(&envelope)?;
     let env_ciphertext_len = ciphertext_len_u32(&envelope_plaintext)?;
@@ -223,9 +294,10 @@ fn build_vault_file(
     )?;
     push_u32_le(&mut env_aad, env_ciphertext_len);
 
-    let env_ciphertext = encrypt(&kek, &env_nonce, &envelope_plaintext, &env_aad)?;
+    let env_ciphertext = encrypt(kek, &env_nonce, &envelope_plaintext, &env_aad)?;
     let payload_ciphertext_len = ciphertext_len_u64(payload_plaintext)?;
     if payload_ciphertext_len > MAX_PAYLOAD_CIPHERTEXT_LEN {
+        payload_key.zeroize();
         return Err(VaultError::InvalidHeader("payload_ct_len"));
     }
 
@@ -245,8 +317,6 @@ fn build_vault_file(
     let mut file_bytes = payload_aad;
     file_bytes.extend_from_slice(&payload_ciphertext);
 
-    kdf_key.zeroize();
-    kek.zeroize();
     payload_key.zeroize();
 
     Ok(file_bytes)
@@ -288,6 +358,71 @@ pub fn unlock_vault_file(
         header: parsed.header,
         envelope,
         payload_plaintext,
+    })
+}
+
+pub fn unlock_vault_file_with_kek(
+    vault_bytes: &[u8],
+    master_password: &str,
+) -> Result<UnlockedVaultWithKek, VaultError> {
+    let parsed = parse_vault(vault_bytes)?;
+
+    let mut kdf_key = derive_kdf_key(
+        master_password,
+        &parsed.header.salt,
+        parsed.header.kdf_params,
+    )?;
+    let mut kek = derive_hkdf(&kdf_key, b"NPW:v1:KEK")?;
+
+    let mut envelope_plaintext = match decrypt(
+        &kek,
+        &parsed.env_nonce,
+        parsed.env_ciphertext,
+        parsed.env_aad,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            kdf_key.zeroize();
+            kek.zeroize();
+            return Err(error);
+        }
+    };
+
+    let envelope: EnvelopePlaintext = match from_cbor(&envelope_plaintext) {
+        Ok(value) => value,
+        Err(error) => {
+            kdf_key.zeroize();
+            kek.zeroize();
+            envelope_plaintext.zeroize();
+            return Err(error);
+        }
+    };
+    let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
+    let payload_plaintext = match decrypt(
+        &payload_key,
+        &parsed.payload_nonce,
+        parsed.payload_ciphertext,
+        parsed.payload_aad,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            kdf_key.zeroize();
+            kek.zeroize();
+            payload_key.zeroize();
+            envelope_plaintext.zeroize();
+            return Err(error);
+        }
+    };
+
+    kdf_key.zeroize();
+    payload_key.zeroize();
+    envelope_plaintext.zeroize();
+
+    Ok(UnlockedVaultWithKek {
+        header: parsed.header,
+        envelope,
+        payload_plaintext,
+        kek,
     })
 }
 
@@ -641,12 +776,44 @@ impl<'a> Reader<'a> {
 mod tests {
     use serde::{Deserialize, Serialize};
 
-    use super::{CreateVaultInput, KdfParams, VaultError, create_vault_file, unlock_vault_file};
+    use super::{
+        CreateVaultInput, KdfParams, VaultError, create_vault_file, reencrypt_vault_file_with_kek,
+        unlock_vault_file, unlock_vault_file_with_kek,
+    };
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     struct SamplePayload {
         schema: u8,
         message: String,
+    }
+
+    #[test]
+    fn roundtrip_unlock_with_kek_and_reencrypt() {
+        let payload = payload_bytes();
+        let file = create_vault_file(&CreateVaultInput {
+            master_password: "correct horse battery staple",
+            payload_plaintext: &payload,
+            item_count: 3,
+            vault_label: Some("Personal"),
+            kdf_params: KdfParams::default(),
+        })
+        .expect("vault creation should succeed");
+        let unlocked = unlock_vault_file_with_kek(&file, "correct horse battery staple")
+            .expect("unlock should succeed");
+
+        let new_payload = b"new payload".to_vec();
+        let rewritten = reencrypt_vault_file_with_kek(
+            unlocked.kek(),
+            &new_payload,
+            5,
+            &unlocked.header,
+            &unlocked.envelope,
+        )
+        .expect("reencrypt should succeed");
+        let unlocked_again = unlock_vault_file(&rewritten, "correct horse battery staple")
+            .expect("unlock should succeed");
+        assert_eq!(unlocked_again.payload_plaintext, new_payload);
+        assert_eq!(unlocked_again.header.item_count, 5);
     }
 
     #[test]
