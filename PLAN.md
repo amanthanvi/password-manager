@@ -130,12 +130,13 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop login password reveal action (optional confirmation) with 30s auto-hide and copy UX that reflects clipboard timeout.
 - [x] M9 slice complete: desktop login password "Generate & Replace" action using the configured generator defaults.
 - [x] M9 slice complete: desktop add/edit supports tags + favorites, multi-URL editing with match types, and passkey reference creation.
+- [x] M9 slice complete: desktop import/export screen with CSV + Bitwarden JSON preview/apply (duplicate resolution) and CSV/JSON/encrypted exports via OS dialogs.
 
 ## 6. Remaining v0.1.0 Blockers (MUST)
 
 - [x] GUI: implement toast + retry error UX (SPEC K12) and use toasts for copy actions (SPEC K6/D4).
 - [x] GUI: implement TOTP QR import with camera scan and paste fallback (SPEC K10).
-- [ ] GUI: implement Import/Export screen (SPEC K1.7) including duplicate resolution UX for CSV/Bitwarden JSON imports (SPEC S1 Scenario 2).
+- [x] GUI: implement Import/Export screen (SPEC K1.7) including duplicate resolution UX for CSV/Bitwarden JSON imports (SPEC S1 Scenario 2).
 - [x] GUI: implement full Add/Edit item flows (SPEC K9) including URL match type badges and tag normalization.
 - [ ] Desktop: implement OS keychain Quick Unlock per vault (SPEC L0) with explicit warning/confirmation.
 - [ ] Core: implement mlock/zeroize policy for key material with graceful degradation (SPEC G8).
