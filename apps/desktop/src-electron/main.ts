@@ -1278,11 +1278,23 @@ function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
 }
 
 function loadAddon(): AddonApi {
-  const addonPath = path.resolve(__dirname, '../native/npw-addon.node')
-  try {
-    return require(addonPath) as AddonApi
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Failed to load native addon at ${addonPath}: ${message}`)
+  const candidates = app.isPackaged
+    ? [
+        path.resolve(process.resourcesPath, 'app.asar.unpacked', 'native', 'npw-addon.node'),
+        path.resolve(process.resourcesPath, 'app.asar', 'native', 'npw-addon.node'),
+        path.resolve(__dirname, '../native/npw-addon.node')
+      ]
+    : [path.resolve(__dirname, '../native/npw-addon.node')]
+
+  let lastError: unknown
+  for (const addonPath of candidates) {
+    try {
+      return require(addonPath) as AddonApi
+    } catch (error) {
+      lastError = error
+    }
   }
+
+  const message = lastError instanceof Error ? lastError.message : String(lastError)
+  throw new Error(`Failed to load native addon. Tried: ${candidates.join(', ')}. Last error: ${message}`)
 }
