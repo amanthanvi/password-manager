@@ -47,3 +47,7 @@ lcov.info
 tarpaulin-report.html
 sbom-npm.cdx.json
 **/sbom-rust.json
+
+# Playwright
+apps/desktop/test-results/
+apps/desktop/playwright-report/
