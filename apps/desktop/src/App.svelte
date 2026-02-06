@@ -1751,7 +1751,7 @@
             </div>
             <div class="actions">
               <button type="button" on:click={() => openRecent(vault)}>Use</button>
-              <button class="secondary" type="button" on:click={() => removeRecent(vault)}>Remove</button>
+              <button class="quiet-destructive" type="button" on:click={() => removeRecent(vault)}>Remove</button>
             </div>
           </li>
         {/each}
@@ -1848,7 +1848,7 @@
 	          Quick Unlock
 	        </button>
 	      {/if}
-	      <button on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
+	      <button class="secondary" on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
 	    </div>
 
 	    {#if !status && quickUnlockForPath.error}
@@ -1913,7 +1913,7 @@
 	            <section class="items">
 	              <div class="card-head">
 	                <h2>Items</h2>
-	                <button class="secondary" type="button" on:click={refreshItems} disabled={!status}>Refresh</button>
+	                <button class="ghost" type="button" on:click={refreshItems} disabled={!status}>Refresh</button>
 	              </div>
 	              <div class="filters">
 	                <label>
@@ -2130,7 +2130,7 @@
               </select>
               <input bind:value={entry.url} placeholder="https://example.com" />
               <button
-                class="secondary"
+                class="quiet-destructive"
                 type="button"
                 disabled={newLoginUrls.length === 1}
                 on:click={() => {
@@ -2367,7 +2367,7 @@
               </select>
               <input bind:value={entry.url} placeholder="https://example.com" disabled={loginEditBusy} />
               <button
-                class="secondary"
+                class="quiet-destructive"
                 type="button"
                 disabled={loginEditBusy || loginEditUrls.length === 1}
                 on:click={() => {
@@ -2991,6 +2991,39 @@
     transform: none;
   }
 
+  button.quiet-destructive {
+    border-color: transparent;
+    background: transparent;
+    color: var(--danger);
+    box-shadow: none;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.85rem;
+  }
+
+  button.quiet-destructive:hover:not(:disabled) {
+    background: rgba(180, 35, 24, 0.08);
+    box-shadow: none;
+    filter: none;
+    transform: none;
+  }
+
+  button.ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--ink-3);
+    box-shadow: none;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  button.ghost:hover:not(:disabled) {
+    color: var(--ink-2);
+    background: rgba(11, 27, 38, 0.05);
+    box-shadow: none;
+    filter: none;
+    transform: none;
+  }
+
   pre {
     margin: 0;
     background: rgba(255, 255, 255, 0.5);
@@ -3005,10 +3038,20 @@
   }
 
   .result {
-    min-height: 2.2rem;
+    min-height: 1.6rem;
     font-family: var(--font-mono);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--ink-3);
+    opacity: 0.6;
+    border: none;
+    background: transparent;
+    padding: 0.35rem 0;
+    border-radius: 0;
+    transition: opacity 200ms ease;
+  }
+
+  .result:hover {
+    opacity: 1;
   }
 
   .toast-host {
@@ -3032,6 +3075,17 @@
     }
   }
 
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   .toast {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
@@ -3041,6 +3095,13 @@
     display: grid;
     gap: 0.5rem;
     animation: toast-in 160ms ease-out;
+  }
+
+  .items,
+  .add-login,
+  .detail,
+  .import-export {
+    animation: panel-in 180ms ease-out;
   }
 
   .toast[data-kind='error'] {
@@ -3098,6 +3159,13 @@
     border-radius: var(--radius-md);
     padding: 0.65rem 0.75rem;
     background: rgba(255, 255, 255, 0.62);
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  }
+
+  .recent:hover {
+    background: rgba(255, 255, 255, 0.82);
+    border-color: rgba(11, 27, 38, 0.16);
+    transform: translateY(-1px);
   }
 
   .recent-meta {
@@ -3107,7 +3175,14 @@
   }
 
   .recent-meta span {
-    word-break: break-word;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    font-size: 0.8rem;
+    max-width: 100%;
   }
 
   .filters {
@@ -3184,9 +3259,22 @@
 
   .detail {
     display: grid;
-    gap: 0.85rem;
+    gap: 0.75rem;
     border-color: rgba(11, 114, 133, 0.25);
     background: rgba(255, 255, 255, 0.88);
+  }
+
+  .add-login {
+    gap: 0.65rem;
+  }
+
+  .add-note .fold-body,
+  .add-passkey .fold-body {
+    gap: 0.65rem;
+  }
+
+  .detail .actions button.destructive {
+    margin-left: auto;
   }
 
   .field {
