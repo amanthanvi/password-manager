@@ -94,6 +94,21 @@ pub struct ItemSummary {
     pub tags: Vec<String>,
 }
 
+#[napi(object)]
+pub struct LoginDetail {
+    pub id: String,
+    pub title: String,
+    pub urls: Vec<String>,
+    pub username: Option<String>,
+    pub has_password: bool,
+    pub has_totp: bool,
+    pub notes: Option<String>,
+    pub favorite: bool,
+    pub created_at: u32,
+    pub updated_at: u32,
+    pub tags: Vec<String>,
+}
+
 #[napi]
 pub struct VaultSession {
     path: String,
@@ -129,6 +144,46 @@ impl VaultSession {
                 .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
         });
         summaries
+    }
+
+    #[napi]
+    pub fn get_login(&self, id: String) -> Result<LoginDetail> {
+        let item = self
+            .payload
+            .get_item(&id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+        let VaultItem::Login(login) = item else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+
+        Ok(LoginDetail {
+            id: login.id.clone(),
+            title: login.title.clone(),
+            urls: login.urls.iter().map(|entry| entry.url.clone()).collect(),
+            username: login.username.clone(),
+            has_password: login.password.is_some(),
+            has_totp: login.totp.is_some(),
+            notes: login.notes.clone(),
+            favorite: login.favorite,
+            created_at: u32::try_from(login.created_at).unwrap_or(u32::MAX),
+            updated_at: u32::try_from(login.updated_at).unwrap_or(u32::MAX),
+            tags: login.tags.clone(),
+        })
+    }
+
+    #[napi]
+    pub fn get_login_password(&self, id: String) -> Result<String> {
+        let item = self
+            .payload
+            .get_item(&id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+        let VaultItem::Login(login) = item else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+        login
+            .password
+            .clone()
+            .ok_or_else(|| error_to_napi("login item has no password".to_owned()))
     }
 
     #[napi]
@@ -208,8 +263,41 @@ fn summarize_item(item: &VaultItem) -> ItemSummary {
 
 #[cfg(test)]
 mod tests {
+    use npw_core::{LoginItem, UrlEntry, UrlMatchType, VaultItem};
+
     #[test]
     fn exposes_core_banner() {
         assert!(super::core_banner().contains("npw"));
+    }
+
+    #[test]
+    fn summarizes_login_item_without_secrets() {
+        let item = VaultItem::Login(LoginItem {
+            id: "00000000-0000-0000-0000-000000000000".to_owned(),
+            title: "Example".to_owned(),
+            urls: vec![UrlEntry {
+                url: "https://example.com".to_owned(),
+                match_type: UrlMatchType::Exact,
+            }],
+            username: Some("user@example.com".to_owned()),
+            password: Some("s3cr3t".to_owned()),
+            totp: None,
+            notes: Some("note".to_owned()),
+            tags: vec!["prod".to_owned()],
+            favorite: true,
+            created_at: 1,
+            updated_at: 2,
+        });
+
+        let summary = super::summarize_item(&item);
+        assert_eq!(summary.id, "00000000-0000-0000-0000-000000000000");
+        assert_eq!(summary.item_type, "login");
+        assert_eq!(summary.title, "Example");
+        assert_eq!(summary.subtitle.as_deref(), Some("user@example.com"));
+        assert_eq!(summary.url.as_deref(), Some("https://example.com"));
+        assert!(summary.favorite);
+        assert!(!summary.has_totp);
+        assert_eq!(summary.updated_at, 2);
+        assert_eq!(summary.tags, vec!["prod"]);
     }
 }

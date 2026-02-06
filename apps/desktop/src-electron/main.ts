@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
+import crypto from 'node:crypto'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 const require = createRequire(import.meta.url)
+
+const DEFAULT_CLIPBOARD_CLEAR_SECONDS = 30
 
 type VaultStatus = {
   path: string
@@ -28,10 +31,26 @@ type ItemSummary = {
   tags: string[]
 }
 
+type LoginDetail = {
+  id: string
+  title: string
+  urls: string[]
+  username: string | null
+  hasPassword: boolean
+  hasTotp: boolean
+  notes: string | null
+  favorite: boolean
+  createdAt: number
+  updatedAt: number
+  tags: string[]
+}
+
 type VaultSession = {
   status: () => VaultStatus
   listItems: (query?: string | null) => ItemSummary[]
   lock: () => void
+  getLogin: (id: string) => LoginDetail
+  getLoginPassword: (id: string) => string
 }
 
 type AddonApi = {
@@ -82,6 +101,7 @@ app.on('window-all-closed', () => {
 
 function registerIpcHandlers(api: AddonApi) {
   let session: VaultSession | null = null
+  let clipboardClear: { token: Buffer; digest: string; timeoutId: NodeJS.Timeout } | null = null
 
   ipcMain.handle('core.banner', () => api.coreBanner())
   ipcMain.handle('vault.create', (_event, payload: { path: string; masterPassword: string; label?: string }) => {
@@ -120,6 +140,61 @@ function registerIpcHandlers(api: AddonApi) {
     const query = payload?.query ? validateOptionalText(payload.query, 'query', 256) : null
     return session.listItems(query)
   })
+
+  ipcMain.handle('item.login.get', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.getLogin(safeId)
+  })
+
+  ipcMain.handle('item.login.copy-username', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const detail = session.getLogin(safeId)
+    if (!detail.username) {
+      throw new Error('login item has no username')
+    }
+    clipboardSetWithAutoClear(detail.username, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
+    return true
+  })
+
+  ipcMain.handle('item.login.copy-password', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const password = session.getLoginPassword(safeId)
+    clipboardSetWithAutoClear(password, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
+    return true
+  })
+
+  function clipboardSetWithAutoClear(value: string, timeoutSeconds: number) {
+    const token = crypto.randomBytes(32)
+    clipboard.writeText(value)
+
+    const digest = sha256Base64(token, value)
+    if (clipboardClear) {
+      clearTimeout(clipboardClear.timeoutId)
+    }
+    const timeoutId = setTimeout(() => {
+      try {
+        const current = clipboard.readText()
+        const currentDigest = sha256Base64(token, current)
+        if (currentDigest === digest) {
+          clipboard.writeText('')
+        }
+      } catch {
+        // Best-effort: never crash the app while clearing.
+      } finally {
+        clipboardClear = null
+      }
+    }, timeoutSeconds * 1000)
+    clipboardClear = { token, digest, timeoutId }
+  }
 }
 
 function validateText(value: string, field: string, maxLen: number): string {
@@ -145,6 +220,10 @@ function validateOptionalText(value: string, field: string, maxLen: number): str
     throw new Error(`${field} is too long`)
   }
   return trimmed
+}
+
+function sha256Base64(token: Buffer, value: string): string {
+  return crypto.createHash('sha256').update(token).update(value).digest('base64')
 }
 
 function loadAddon(): AddonApi {

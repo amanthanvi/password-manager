@@ -20,6 +20,20 @@ declare global {
     tags: string[]
   }
 
+  interface LoginDetail {
+    id: string
+    title: string
+    urls: string[]
+    username: string | null
+    hasPassword: boolean
+    hasTotp: boolean
+    notes: string | null
+    favorite: boolean
+    createdAt: number
+    updatedAt: number
+    tags: string[]
+  }
+
   interface Window {
     npw: {
       coreBanner: () => Promise<string>
@@ -29,6 +43,9 @@ declare global {
       vaultUnlock: (payload: { path: string; masterPassword: string }) => Promise<VaultStatus>
       vaultLock: () => Promise<boolean>
       itemList: (payload: { query?: string | null }) => Promise<ItemSummary[]>
+      loginGet: (payload: { id: string }) => Promise<LoginDetail>
+      loginCopyUsername: (payload: { id: string }) => Promise<boolean>
+      loginCopyPassword: (payload: { id: string }) => Promise<boolean>
     }
   }
 }

@@ -10,6 +10,8 @@
   let lastResult = ''
   let status = null
   let items = []
+  let selectedItem = null
+  let loginDetail = null
 
   onMount(async () => {
     try {
@@ -61,7 +63,53 @@
   const refreshItems = async () => {
     try {
       items = await window.npw.itemList({ query: query.length > 0 ? query : null })
+      if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
+        selectedItem = null
+        loginDetail = null
+      }
       lastResult = `Loaded ${items.length} items`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const selectItem = async (item) => {
+    selectedItem = item
+    loginDetail = null
+    if (!item) {
+      return
+    }
+    if (item.itemType !== 'login') {
+      lastResult = `Item type ${item.itemType} detail view not implemented yet`
+      return
+    }
+    try {
+      loginDetail = await window.npw.loginGet({ id: item.id })
+      lastResult = `Loaded item ${item.id}`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const copyUsername = async () => {
+    if (!selectedItem) {
+      return
+    }
+    try {
+      await window.npw.loginCopyUsername({ id: selectedItem.id })
+      lastResult = 'Copied username to clipboard'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const copyPassword = async () => {
+    if (!selectedItem) {
+      return
+    }
+    try {
+      await window.npw.loginCopyPassword({ id: selectedItem.id })
+      lastResult = 'Copied password to clipboard (auto-clears)'
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -121,25 +169,75 @@
       {#if items.length === 0}
         <p class="muted">No items found.</p>
       {:else}
-        <ul>
+        <ul class="item-list">
           {#each items as item (item.id)}
-            <li>
-              <strong>{item.title}</strong>
-              <span class="meta">
-                {item.itemType}
-                {#if item.subtitle}
-                  · {item.subtitle}
-                {/if}
-                {#if item.url}
-                  · {item.url}
-                {/if}
-                {#if item.hasTotp}
-                  · TOTP
-                {/if}
-              </span>
+            <li class:selected={selectedItem?.id === item.id}>
+              <button class="row" type="button" on:click={() => selectItem(item)}>
+                <strong>{item.title}</strong>
+                <span class="meta">
+                  {item.itemType}
+                  {#if item.subtitle}
+                    · {item.subtitle}
+                  {/if}
+                  {#if item.url}
+                    · {item.url}
+                  {/if}
+                  {#if item.hasTotp}
+                    · TOTP
+                  {/if}
+                </span>
+              </button>
             </li>
           {/each}
         </ul>
+      {/if}
+    </section>
+  {/if}
+
+  {#if status && selectedItem && loginDetail}
+    <section class="detail">
+      <h2>Login</h2>
+      <p class="muted">{loginDetail.id}</p>
+
+      <div class="field">
+        <div class="label">Title</div>
+        <div>{loginDetail.title}</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Username</div>
+        <div class="inline">
+          <span>{loginDetail.username ?? '(none)'}</span>
+          <button on:click={copyUsername} disabled={!loginDetail.username}>Copy</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">Password</div>
+        <div class="inline">
+          <span>{loginDetail.hasPassword ? '••••••••' : '(none)'}</span>
+          <button on:click={copyPassword} disabled={!loginDetail.hasPassword}>Copy</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">URLs</div>
+        {#if loginDetail.urls.length === 0}
+          <div class="muted">(none)</div>
+        {:else}
+          <ul class="urls">
+            {#each loginDetail.urls as url, index (index)}
+              <li>{url}</li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+
+      {#if loginDetail.notes}
+        <div class="field">
+          <div class="label">Notes</div>
+          <pre class="note">{loginDetail.notes}</pre>
+        </div>
       {/if}
     </section>
   {/if}
@@ -204,6 +302,28 @@
     padding-left: 1.25rem;
   }
 
+  .item-list {
+    list-style: none;
+    padding-left: 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .row {
+    width: 100%;
+    text-align: left;
+    border: 1px solid #93a8b5;
+    border-radius: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    background: #f4fbff;
+    color: inherit;
+  }
+
+  li.selected .row {
+    border-color: #31536b;
+    box-shadow: 0 0 0 2px rgba(49, 83, 107, 0.15);
+  }
+
   .meta {
     display: block;
     font-size: 0.9rem;
@@ -214,5 +334,36 @@
   .muted {
     opacity: 0.75;
     margin: 0;
+  }
+
+  .detail {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .label {
+    font-weight: 700;
+  }
+
+  .inline {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .urls {
+    margin: 0;
+    padding-left: 1.25rem;
+  }
+
+  .note {
+    background: #f4fbff;
+    border: 1px solid #93a8b5;
   }
 </style>
