@@ -50,6 +50,20 @@ declare global {
     tags: string[]
   }
 
+  interface PasskeyRefDetail {
+    id: string
+    title: string
+    rpId: string
+    rpName: string | null
+    userDisplayName: string | null
+    credentialIdHex: string
+    notes: string | null
+    favorite: boolean
+    createdAt: number
+    updatedAt: number
+    tags: string[]
+  }
+
   interface TotpCode {
     code: string
     period: number
@@ -73,6 +87,9 @@ declare global {
       itemList: (payload: { query?: string | null }) => Promise<ItemSummary[]>
       loginGet: (payload: { id: string }) => Promise<LoginDetail>
       noteGet: (payload: { id: string }) => Promise<NoteDetail>
+      passkeyRefGet: (payload: { id: string }) => Promise<PasskeyRefDetail>
+      passkeyOpenSite: (payload: { id: string }) => Promise<boolean>
+      passkeyOpenManager: () => Promise<boolean>
       noteAdd: (payload: { title: string; body: string }) => Promise<string>
       loginAdd: (payload: {
         title: string

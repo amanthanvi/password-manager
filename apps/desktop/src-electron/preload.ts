@@ -51,6 +51,20 @@ type NoteDetail = {
   tags: string[]
 }
 
+type PasskeyRefDetail = {
+  id: string
+  title: string
+  rpId: string
+  rpName: string | null
+  userDisplayName: string | null
+  credentialIdHex: string
+  notes: string | null
+  favorite: boolean
+  createdAt: number
+  updatedAt: number
+  tags: string[]
+}
+
 type TotpCode = {
   code: string
   period: number
@@ -92,6 +106,9 @@ contextBridge.exposeInMainWorld('npw', {
   itemList: (payload: { query?: string | null }): Promise<ItemSummary[]> => ipcRenderer.invoke('item.list', payload),
   loginGet: (payload: { id: string }): Promise<LoginDetail> => ipcRenderer.invoke('item.login.get', payload),
   noteGet: (payload: { id: string }): Promise<NoteDetail> => ipcRenderer.invoke('item.note.get', payload),
+  passkeyRefGet: (payload: { id: string }): Promise<PasskeyRefDetail> => ipcRenderer.invoke('item.passkey.get', payload),
+  passkeyOpenSite: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.passkey.open-site', payload),
+  passkeyOpenManager: (): Promise<boolean> => ipcRenderer.invoke('passkey.open-manager'),
   noteAdd: (payload: { title: string; body: string }): Promise<string> => ipcRenderer.invoke('item.note.add', payload),
   loginAdd: (payload: AddLoginInput): Promise<string> => ipcRenderer.invoke('item.login.add', payload),
   itemDelete: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.delete', payload),

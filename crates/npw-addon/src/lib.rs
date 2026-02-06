@@ -123,6 +123,21 @@ pub struct NoteDetail {
 }
 
 #[napi(object)]
+pub struct PasskeyRefDetail {
+    pub id: String,
+    pub title: String,
+    pub rp_id: String,
+    pub rp_name: Option<String>,
+    pub user_display_name: Option<String>,
+    pub credential_id_hex: String,
+    pub notes: Option<String>,
+    pub favorite: bool,
+    pub created_at: u32,
+    pub updated_at: u32,
+    pub tags: Vec<String>,
+}
+
+#[napi(object)]
 pub struct TotpCode {
     pub code: String,
     pub period: u16,
@@ -234,6 +249,31 @@ impl VaultSession {
             created_at: u32::try_from(note.created_at).unwrap_or(u32::MAX),
             updated_at: u32::try_from(note.updated_at).unwrap_or(u32::MAX),
             tags: note.tags.clone(),
+        })
+    }
+
+    #[napi]
+    pub fn get_passkey_ref(&self, id: String) -> Result<PasskeyRefDetail> {
+        let item = self
+            .payload
+            .get_item(&id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+        let VaultItem::PasskeyRef(passkey) = item else {
+            return Err(error_to_napi("item is not a passkey reference".to_owned()));
+        };
+
+        Ok(PasskeyRefDetail {
+            id: passkey.id.clone(),
+            title: passkey.title.clone(),
+            rp_id: passkey.rp_id.clone(),
+            rp_name: passkey.rp_name.clone(),
+            user_display_name: passkey.user_display_name.clone(),
+            credential_id_hex: hex_encode(&passkey.credential_id),
+            notes: passkey.notes.clone(),
+            favorite: passkey.favorite,
+            created_at: u32::try_from(passkey.created_at).unwrap_or(u32::MAX),
+            updated_at: u32::try_from(passkey.updated_at).unwrap_or(u32::MAX),
+            tags: passkey.tags.clone(),
         })
     }
 
@@ -384,6 +424,15 @@ impl VaultSession {
         self.unlocked.header.item_count = self.payload.item_count();
         Ok(())
     }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }
 
 #[napi]

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor, shell } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -64,6 +64,20 @@ type NoteDetail = {
   tags: string[]
 }
 
+type PasskeyRefDetail = {
+  id: string
+  title: string
+  rpId: string
+  rpName: string | null
+  userDisplayName: string | null
+  credentialIdHex: string
+  notes: string | null
+  favorite: boolean
+  createdAt: number
+  updatedAt: number
+  tags: string[]
+}
+
 type TotpCode = {
   code: string
   period: number
@@ -86,6 +100,7 @@ type VaultSession = {
   getLoginPassword: (id: string) => string
   getLoginTotp: (id: string) => TotpCode
   getNote: (id: string) => NoteDetail
+  getPasskeyRef: (id: string) => PasskeyRefDetail
   addNote: (title: string, body: string) => string
   addLogin: (input: AddLoginInput) => string
   deleteItem: (id: string) => boolean
@@ -240,6 +255,34 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     return session.getNote(safeId)
+  })
+
+  ipcMain.handle('item.passkey.get', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.getPasskeyRef(safeId)
+  })
+
+  ipcMain.handle('item.passkey.open-site', async (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const detail = session.getPasskeyRef(safeId)
+    const origin = rpIdToOrigin(detail.rpId)
+    await shell.openExternal(origin)
+    return true
+  })
+
+  ipcMain.handle('passkey.open-manager', async () => {
+    const target = osPasskeyManagerUrl()
+    if (!target) {
+      throw new Error('passkey manager is not available on this platform')
+    }
+    await shell.openExternal(target)
+    return true
   })
 
   ipcMain.handle('item.note.add', (_event, payload: { title: string; body: string }) => {
@@ -461,6 +504,29 @@ function validateOptionalText(value: string, field: string, maxLen: number): str
 
 function sha256Base64(token: Buffer, value: string): string {
   return crypto.createHash('sha256').update(token).update(value).digest('base64')
+}
+
+function rpIdToOrigin(rpId: string): string {
+  const trimmed = rpId.trim()
+  if (trimmed.length === 0) {
+    throw new Error('rpId cannot be empty')
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    const parsed = new URL(trimmed)
+    return parsed.origin
+  }
+  const parsed = new URL(`https://${trimmed}`)
+  return parsed.origin
+}
+
+function osPasskeyManagerUrl(): string | null {
+  if (process.platform === 'darwin') {
+    return 'x-apple.systempreferences:com.apple.Passwords'
+  }
+  if (process.platform === 'win32') {
+    return 'ms-settings:signinoptions'
+  }
+  return null
 }
 
 function ensureNpwExtension(filePath: string): string {

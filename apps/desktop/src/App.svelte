@@ -13,6 +13,7 @@
   let selectedItem = null
   let loginDetail = null
   let noteDetail = null
+  let passkeyDetail = null
   let totp = null
   let totpInterval = null
   let recents = []
@@ -47,6 +48,7 @@
       selectedItem = null
       loginDetail = null
       noteDetail = null
+      passkeyDetail = null
       totp = null
       clearTotpInterval()
       masterPassword = ''
@@ -120,6 +122,7 @@
       selectedItem = null
       loginDetail = null
       noteDetail = null
+      passkeyDetail = null
       totp = null
       clearTotpInterval()
       lastResult = 'Vault locked'
@@ -183,6 +186,7 @@
         selectedItem = null
         loginDetail = null
         noteDetail = null
+        passkeyDetail = null
         totp = null
         clearTotpInterval()
       }
@@ -261,6 +265,7 @@
     selectedItem = item
     loginDetail = null
     noteDetail = null
+    passkeyDetail = null
     totp = null
     clearTotpInterval()
     if (!item) {
@@ -295,6 +300,12 @@
 
       if (item.itemType === 'note') {
         noteDetail = await window.npw.noteGet({ id: itemId })
+        lastResult = `Loaded item ${itemId}`
+        return
+      }
+
+      if (item.itemType === 'passkey_ref') {
+        passkeyDetail = await window.npw.passkeyRefGet({ id: itemId })
         lastResult = `Loaded item ${itemId}`
         return
       }
@@ -343,6 +354,27 @@
 
   const refreshTotp = async (id) => {
     totp = await window.npw.loginTotpGet({ id })
+  }
+
+  const openPasskeySite = async () => {
+    if (!selectedItem) {
+      return
+    }
+    try {
+      await window.npw.passkeyOpenSite({ id: selectedItem.id })
+      lastResult = 'Opened relying party site'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const openPasskeyManager = async () => {
+    try {
+      await window.npw.passkeyOpenManager()
+      lastResult = 'Opened OS passkey manager'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
   }
 
   const clearTotpInterval = () => {
@@ -588,6 +620,50 @@
       </div>
     </section>
   {/if}
+
+  {#if status && selectedItem && passkeyDetail}
+    <section class="detail">
+      <h2>Passkey Reference</h2>
+      <p class="muted">{passkeyDetail.id}</p>
+      <p class="callout">This app does not store passkeys. This is a reference entry.</p>
+      <div class="actions">
+        <button on:click={openPasskeySite}>Open Site</button>
+        <button on:click={openPasskeyManager}>Open Passkey Manager</button>
+        <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
+      </div>
+
+      <div class="field">
+        <div class="label">Relying Party ID</div>
+        <div>{passkeyDetail.rpId}</div>
+      </div>
+
+      {#if passkeyDetail.rpName}
+        <div class="field">
+          <div class="label">Relying Party Name</div>
+          <div>{passkeyDetail.rpName}</div>
+        </div>
+      {/if}
+
+      {#if passkeyDetail.userDisplayName}
+        <div class="field">
+          <div class="label">User</div>
+          <div>{passkeyDetail.userDisplayName}</div>
+        </div>
+      {/if}
+
+      <div class="field">
+        <div class="label">Credential ID (hex)</div>
+        <pre class="note mono">{passkeyDetail.credentialIdHex}</pre>
+      </div>
+
+      {#if passkeyDetail.notes}
+        <div class="field">
+          <div class="label">Notes</div>
+          <pre class="note">{passkeyDetail.notes}</pre>
+        </div>
+      {/if}
+    </section>
+  {/if}
 </main>
 
 <style>
@@ -785,5 +861,17 @@
   .note {
     background: #f4fbff;
     border: 1px solid #93a8b5;
+  }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  }
+
+  .callout {
+    margin: 0;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #e0d2a3;
+    border-radius: 0.5rem;
+    background: #fff6d7;
   }
 </style>
