@@ -22,5 +22,5 @@ pub fn bootstrap_banner() -> String {
 
 pub use vault::{
     CreateVaultInput, EnvelopePlaintext, KdfParams, UnlockedVault, VaultError, VaultHeader,
-    create_vault_file, unlock_vault_file,
+    create_vault_file, parse_vault_header, unlock_vault_file,
 };

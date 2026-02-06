@@ -8,6 +8,7 @@ use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroize;
 
 const MAGIC: &[u8; 4] = b"NPW1";
@@ -245,6 +246,10 @@ pub fn unlock_vault_file(
     })
 }
 
+pub fn parse_vault_header(vault_bytes: &[u8]) -> Result<VaultHeader, VaultError> {
+    Ok(parse_vault(vault_bytes)?.header)
+}
+
 fn validate_env_ciphertext_len(len: u32) -> Result<(), VaultError> {
     if !(MIN_ENV_CIPHERTEXT_LEN..=MAX_ENV_CIPHERTEXT_LEN).contains(&len) {
         return Err(VaultError::InvalidHeader("env_ct_len"));
@@ -404,10 +409,12 @@ fn derive_kdf_key(
     )
     .map_err(|_| VaultError::KdfFailure)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2_params);
+    let mut normalized_password: String = master_password.nfkc().collect();
     let mut output = [0_u8; KEY_LEN];
     argon2
-        .hash_password_into(master_password.as_bytes(), salt, &mut output)
+        .hash_password_into(normalized_password.as_bytes(), salt, &mut output)
         .map_err(|_| VaultError::KdfFailure)?;
+    normalized_password.zeroize();
     Ok(output)
 }
 
