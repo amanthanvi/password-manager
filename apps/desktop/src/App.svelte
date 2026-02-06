@@ -1763,60 +1763,6 @@
     </div>
   </section>
 
-  <section class="settings">
-    <h2>Settings</h2>
-    {#if appConfig?.configPath}
-      <p class="muted">Config path: <span class="mono">{appConfig.configPath}</span></p>
-    {/if}
-
-    <label>
-      Auto-lock minutes
-      <input type="number" min="1" max="60" step="1" bind:value={settingsAutoLockMinutes} />
-    </label>
-
-    <label>
-      Lock on suspend / lock screen
-      <input type="checkbox" bind:checked={settingsLockOnSuspend} />
-    </label>
-
-    <label>
-      Clipboard timeout (seconds)
-      <input type="number" min="0" max="90" step="1" bind:value={settingsClipboardTimeoutSeconds} />
-    </label>
-
-    {#if Number(settingsClipboardTimeoutSeconds) === 0}
-      <p class="callout">Warning: clipboard auto-clear is disabled.</p>
-    {/if}
-
-    <label>
-      Reveal requires confirmation
-      <input type="checkbox" bind:checked={settingsRevealRequiresConfirm} />
-    </label>
-
-    <label>
-      Log level
-      <select bind:value={settingsLogLevel}>
-        <option value="error">error</option>
-        <option value="warn">warn</option>
-        <option value="info">info</option>
-        <option value="debug">debug</option>
-      </select>
-    </label>
-
-    {#if settingsError}
-      <p class="callout">{settingsError}</p>
-    {/if}
-
-    <div class="actions">
-      <button type="button" on:click={saveSettings} disabled={settingsSaving || !bridgeAvailable}>
-        {settingsSaving ? 'Saving…' : 'Save Settings'}
-      </button>
-      <button class="secondary" type="button" on:click={refreshConfig} disabled={settingsSaving || !bridgeAvailable}>
-        Reload
-      </button>
-    </div>
-	  </section>
-
 	  <section class="vault">
 	    <h2>Vault</h2>
 
@@ -1894,7 +1840,61 @@
 	    </details>
 	  {/if}
 
-	    </aside>
+    <section class="settings">
+      <h2>Settings</h2>
+      {#if appConfig?.configPath}
+        <p class="muted">Config path: <span class="mono">{appConfig.configPath}</span></p>
+      {/if}
+
+      <label>
+        Auto-lock minutes
+        <input type="number" min="1" max="60" step="1" bind:value={settingsAutoLockMinutes} />
+      </label>
+
+      <label>
+        Lock on suspend / lock screen
+        <input type="checkbox" bind:checked={settingsLockOnSuspend} />
+      </label>
+
+      <label>
+        Clipboard timeout (seconds)
+        <input type="number" min="0" max="90" step="1" bind:value={settingsClipboardTimeoutSeconds} />
+      </label>
+
+      {#if Number(settingsClipboardTimeoutSeconds) === 0}
+        <p class="callout">Warning: clipboard auto-clear is disabled.</p>
+      {/if}
+
+      <label>
+        Reveal requires confirmation
+        <input type="checkbox" bind:checked={settingsRevealRequiresConfirm} />
+      </label>
+
+      <label>
+        Log level
+        <select bind:value={settingsLogLevel}>
+          <option value="error">error</option>
+          <option value="warn">warn</option>
+          <option value="info">info</option>
+          <option value="debug">debug</option>
+        </select>
+      </label>
+
+      {#if settingsError}
+        <p class="callout">{settingsError}</p>
+      {/if}
+
+      <div class="actions">
+        <button type="button" on:click={saveSettings} disabled={settingsSaving || !bridgeAvailable}>
+          {settingsSaving ? 'Saving…' : 'Save Settings'}
+        </button>
+        <button class="secondary" type="button" on:click={refreshConfig} disabled={settingsSaving || !bridgeAvailable}>
+          Reload
+        </button>
+      </div>
+    </section>
+
+    </aside>
 
     <section class="workspace">
       <label class="search">
@@ -2285,13 +2285,17 @@
 
   {#if status && selectedItem && loginDetail}
     <section class="detail">
-      <h2>Login</h2>
-      <p class="muted">{loginDetail.id}</p>
-      <div class="actions">
-        <button type="button" on:click={updateLogin} disabled={loginEditBusy || loginEditTitle.trim().length === 0}>
-          {loginEditBusy ? 'Saving…' : 'Save'}
-        </button>
-        <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+      <div class="detail-head">
+        <div>
+          <h2>Login</h2>
+          <p class="muted">{loginDetail.id}</p>
+        </div>
+        <div class="actions">
+          <button type="button" on:click={updateLogin} disabled={loginEditBusy || loginEditTitle.trim().length === 0}>
+            {loginEditBusy ? 'Saving…' : 'Save'}
+          </button>
+          <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+        </div>
       </div>
 
       <label>
@@ -2355,7 +2359,7 @@
         {/if}
       </div>
 
-      <div class="field">
+      <div class="field detail-divider">
         <div class="label">URLs</div>
         <div class="url-editor">
           {#each loginEditUrls as entry, index (index)}
@@ -2415,13 +2419,17 @@
 
   {#if status && selectedItem && noteDetail}
     <section class="detail">
-      <h2>Note</h2>
-      <p class="muted">{noteDetail.id}</p>
-      <div class="actions">
-        <button type="button" on:click={updateNote} disabled={noteEditBusy || noteEditTitle.trim().length === 0}>
-          {noteEditBusy ? 'Saving…' : 'Save'}
-        </button>
-        <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+      <div class="detail-head">
+        <div>
+          <h2>Note</h2>
+          <p class="muted">{noteDetail.id}</p>
+        </div>
+        <div class="actions">
+          <button type="button" on:click={updateNote} disabled={noteEditBusy || noteEditTitle.trim().length === 0}>
+            {noteEditBusy ? 'Saving…' : 'Save'}
+          </button>
+          <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+        </div>
       </div>
 
       <label>
@@ -2452,21 +2460,25 @@
 
   {#if status && selectedItem && passkeyDetail}
     <section class="detail">
-      <h2>Passkey Reference</h2>
-      <p class="muted">{passkeyDetail.id}</p>
-      <p class="callout">This app does not store passkeys. This is a reference entry.</p>
-      <div class="actions">
-        <button
-          type="button"
-          on:click={updatePasskeyRef}
-          disabled={passkeyEditBusy || passkeyEditTitle.trim().length === 0}
-        >
-          {passkeyEditBusy ? 'Saving…' : 'Save'}
-        </button>
-        <button on:click={openPasskeySite}>Open Site</button>
-        <button on:click={openPasskeyManager}>Open Passkey Manager</button>
-        <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+      <div class="detail-head">
+        <div>
+          <h2>Passkey Reference</h2>
+          <p class="muted">{passkeyDetail.id}</p>
+        </div>
+        <div class="actions">
+          <button
+            type="button"
+            on:click={updatePasskeyRef}
+            disabled={passkeyEditBusy || passkeyEditTitle.trim().length === 0}
+          >
+            {passkeyEditBusy ? 'Saving…' : 'Save'}
+          </button>
+          <button class="secondary" on:click={openPasskeySite}>Open Site</button>
+          <button class="secondary" on:click={openPasskeyManager}>Open Passkey Manager</button>
+          <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+        </div>
       </div>
+      <p class="callout">This app does not store passkeys. This is a reference entry.</p>
 
       <label>
         Title
@@ -2770,7 +2782,18 @@
     min-height: 0;
   }
 
-  .sidebar,
+  .sidebar {
+    display: grid;
+    gap: 0.55rem;
+    min-height: 0;
+    overflow: auto;
+    padding-right: 0.35rem;
+  }
+
+  .sidebar .settings {
+    margin-top: 0.55rem;
+  }
+
   .workspace {
     display: grid;
     gap: 0.85rem;
@@ -2893,6 +2916,27 @@
     padding: 0.4rem 0.7rem;
   }
 
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.9rem;
+  }
+
+  .search .label {
+    font-weight: 650;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+    flex-shrink: 0;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .search input {
+    flex: 1;
+    min-width: 0;
+  }
+
   label {
     display: grid;
     gap: 0.4rem;
@@ -2931,7 +2975,7 @@
     display: flex;
     gap: 0.65rem;
     flex-wrap: wrap;
-    margin-top: 0.25rem;
+    margin-top: 0.35rem;
   }
 
   button {
@@ -3022,6 +3066,27 @@
     box-shadow: none;
     filter: none;
     transform: none;
+  }
+
+  .detail .inline button:not(.secondary):not(.destructive):not(.quiet-destructive):not(.ghost) {
+    border-color: transparent;
+    background: transparent;
+    color: var(--accent);
+    box-shadow: none;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.85rem;
+    font-weight: 650;
+  }
+
+  .detail .inline button:not(.secondary):not(.destructive):not(.quiet-destructive):not(.ghost):hover:not(:disabled) {
+    background: rgba(11, 114, 133, 0.08);
+    box-shadow: none;
+    filter: none;
+    transform: none;
+  }
+
+  .detail .inline button:not(.secondary):not(.destructive):not(.quiet-destructive):not(.ghost):disabled {
+    color: var(--ink-3);
   }
 
   pre {
@@ -3174,6 +3239,10 @@
     min-width: 0;
   }
 
+  .recent .actions {
+    margin-top: 0;
+  }
+
   .recent-meta span {
     display: block;
     overflow: hidden;
@@ -3264,6 +3333,39 @@
     background: rgba(255, 255, 255, 0.88);
   }
 
+  .detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .detail-head > div:first-child {
+    min-width: 0;
+  }
+
+  .detail-head .muted {
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    margin-top: 0.15rem;
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 22rem;
+  }
+
+  .detail-head .actions {
+    margin-top: 0;
+    flex-shrink: 0;
+  }
+
+  .detail-divider {
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border);
+    margin-top: 0.15rem;
+  }
+
   .add-login {
     gap: 0.65rem;
   }
@@ -3279,11 +3381,12 @@
 
   .field {
     display: grid;
-    gap: 0.35rem;
+    gap: 0.4rem;
   }
 
   .label {
-    font-weight: 750;
+    font-weight: 650;
+    font-size: 0.9rem;
     color: var(--ink-2);
   }
 
