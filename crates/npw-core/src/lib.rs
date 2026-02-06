@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub mod model;
+pub mod password;
 pub mod totp;
 pub mod vault;
 
@@ -26,6 +27,10 @@ pub use model::{
     AppMetadata, ItemTypeFilter, LoginItem, ModelError, NoteItem, PasskeyRefItem, SearchDoc,
     SearchIndex, Tombstone, TotpAlgorithm, TotpConfig, UrlEntry, UrlMatchType, VaultItem,
     VaultPayload,
+};
+pub use password::{
+    MASTER_PASSWORD_MIN_CHARS, MASTER_PASSWORD_MIN_SCORE, MASTER_PASSWORD_MIN_WORDS,
+    MasterPasswordAssessment, PasswordFeedback, assess_master_password,
 };
 pub use totp::{
     TotpError, decode_base32_secret, generate_totp, generate_totp_now, parse_otpauth_uri,

@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
-    CreateVaultInput, KdfParams, VaultPayload, create_vault_file, parse_vault_header,
-    unlock_vault_file,
+    CreateVaultInput, KdfParams, VaultPayload, assess_master_password, create_vault_file,
+    parse_vault_header, unlock_vault_file,
 };
 use npw_storage::{read_vault, write_vault};
 
@@ -30,6 +30,10 @@ pub fn vault_create(
     vault_label: Option<String>,
 ) -> Result<()> {
     let path_ref = std::path::Path::new(&path);
+    let assessment = assess_master_password(&master_password);
+    if !assessment.meets_policy() {
+        return Err(error_to_napi(assessment.rejection_message()));
+    }
     let payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now())
         .to_cbor()
         .map_err(|error| error_to_napi(error.to_string()))?;

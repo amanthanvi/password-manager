@@ -113,3 +113,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M6 slice complete: `migrate` and `downgrade` command surface with schema guardrails for current v1 payloads.
 - [x] M6 slice complete: CLI `totp add|show|copy|export-qr` (otpauth:// + encrypted QR formats) and clipboard auto-clear helper.
 - [x] M6 slice complete: structured audit logging + audit events and secret redaction tests.
+- [x] M5 slice complete: zxcvbn master password policy (score >= 3) enforced (CLI + desktop vault create).

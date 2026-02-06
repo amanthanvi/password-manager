@@ -13,8 +13,8 @@ use getrandom::fill;
 use npw_core::{
     CreateVaultInput, ItemTypeFilter, KdfParams, LoginItem, ModelError, NoteItem, PasskeyRefItem,
     ReencryptVaultInput, TotpAlgorithm, TotpConfig, TotpError, UrlEntry, UrlMatchType, VaultError,
-    VaultItem, VaultPayload, create_vault_file, decode_base32_secret, generate_totp,
-    parse_otpauth_uri, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
+    VaultItem, VaultPayload, assess_master_password, create_vault_file, decode_base32_secret,
+    generate_totp, parse_otpauth_uri, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
 };
 use npw_storage::{
     BackupEntry, StorageError, list_backups, read_vault, recover_from_backup, write_vault,
@@ -3345,15 +3345,12 @@ fn resolve_vault_path(
 }
 
 fn validate_master_password(password: &str) -> Result<(), CliError> {
-    let char_count = password.chars().count();
-    let word_count = password.split_whitespace().count();
-    if char_count >= 12 || word_count >= 4 {
+    let assessment = assess_master_password(password);
+    if assessment.meets_policy() {
         return Ok(());
     }
 
-    Err(CliError::usage(
-        "master password must be at least 12 characters or at least 4 words",
-    ))
+    Err(CliError::usage(assessment.rejection_message()))
 }
 
 fn read_interactive_password(
