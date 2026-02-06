@@ -1206,11 +1206,14 @@ name = "npw-addon"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
+ "directories",
  "napi",
  "napi-derive",
  "npw-core",
  "npw-storage",
  "qrcode",
+ "serde",
+ "toml",
  "uuid",
  "zeroize",
 ]

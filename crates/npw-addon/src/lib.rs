@@ -16,6 +16,8 @@ use qrcode::QrCode;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
+mod config;
+
 #[napi(object)]
 pub struct VaultStatus {
     pub path: String,
@@ -86,6 +88,102 @@ pub fn vault_check(path: String, master_password: String) -> Result<VaultStatus>
         kdf_iterations: unlocked.header.kdf_params.iterations,
         kdf_parallelism: unlocked.header.kdf_params.parallelism,
     })
+}
+
+#[napi(object)]
+pub struct SecurityConfig {
+    pub clipboard_timeout_seconds: u32,
+    pub auto_lock_minutes: u32,
+    pub lock_on_suspend: bool,
+    pub reveal_requires_confirm: bool,
+}
+
+#[napi(object)]
+pub struct GeneratorConfig {
+    pub default_mode: String,
+    pub charset_length: u32,
+    pub charset_uppercase: bool,
+    pub charset_lowercase: bool,
+    pub charset_digits: bool,
+    pub charset_symbols: bool,
+    pub charset_avoid_ambiguous: bool,
+    pub diceware_words: u32,
+    pub diceware_separator: String,
+}
+
+#[napi(object)]
+pub struct LoggingConfig {
+    pub level: String,
+}
+
+#[napi(object)]
+pub struct BackupConfig {
+    pub max_retained: u32,
+}
+
+#[napi(object)]
+pub struct AppConfig {
+    pub config_path: String,
+    pub default_vault: Option<String>,
+    pub security: SecurityConfig,
+    pub generator: GeneratorConfig,
+    pub logging: LoggingConfig,
+    pub backup: BackupConfig,
+}
+
+#[napi]
+pub fn config_load() -> Result<AppConfig> {
+    let (config, config_path) =
+        config::load_config(None).map_err(|error| error_to_napi(error.to_string()))?;
+    Ok(app_config_view(config, config_path))
+}
+
+#[napi]
+pub fn config_set(key: String, value: String) -> Result<AppConfig> {
+    let (mut config, config_path) =
+        config::load_config(None).map_err(|error| error_to_napi(error.to_string()))?;
+    let key_trimmed = key.trim();
+    if key_trimmed.is_empty() {
+        return Err(error_to_napi("config key cannot be empty".to_owned()));
+    }
+    config::config_set(&mut config, key_trimmed, &value)
+        .map_err(|error| error_to_napi(error.to_string()))?;
+    config::save_config(&config, &config_path).map_err(|error| error_to_napi(error.to_string()))?;
+    Ok(app_config_view(config, config_path))
+}
+
+fn app_config_view(config: config::AppConfig, config_path: std::path::PathBuf) -> AppConfig {
+    let default_mode = match config.generator.default_mode {
+        config::GenerateMode::Charset => "charset",
+        config::GenerateMode::Diceware => "diceware",
+    };
+    AppConfig {
+        config_path: config_path.to_string_lossy().to_string(),
+        default_vault: config.default_vault,
+        security: SecurityConfig {
+            clipboard_timeout_seconds: config.security.clipboard_timeout_seconds,
+            auto_lock_minutes: config.security.auto_lock_minutes,
+            lock_on_suspend: config.security.lock_on_suspend,
+            reveal_requires_confirm: config.security.reveal_requires_confirm,
+        },
+        generator: GeneratorConfig {
+            default_mode: default_mode.to_owned(),
+            charset_length: u32::try_from(config.generator.charset_length).unwrap_or(u32::MAX),
+            charset_uppercase: config.generator.charset_uppercase,
+            charset_lowercase: config.generator.charset_lowercase,
+            charset_digits: config.generator.charset_digits,
+            charset_symbols: config.generator.charset_symbols,
+            charset_avoid_ambiguous: config.generator.charset_avoid_ambiguous,
+            diceware_words: u32::try_from(config.generator.diceware_words).unwrap_or(u32::MAX),
+            diceware_separator: config.generator.diceware_separator,
+        },
+        logging: LoggingConfig {
+            level: config.logging.level,
+        },
+        backup: BackupConfig {
+            max_retained: u32::try_from(config.backup.max_retained).unwrap_or(u32::MAX),
+        },
+    }
 }
 
 #[napi(object)]
