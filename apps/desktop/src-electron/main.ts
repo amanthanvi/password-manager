@@ -13,6 +13,19 @@ const DEFAULT_CLIPBOARD_CLEAR_SECONDS = 30
 const MAX_RECENT_VAULTS = 10
 const DEFAULT_AUTO_LOCK_MS = 5 * 60 * 1000
 
+const PROD_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-src 'none'"
+].join('; ')
+
 type VaultStatus = {
   path: string
   label: string
@@ -182,6 +195,10 @@ const createWindow = () => {
     }
   })
 
+  if (!isDev) {
+    applyProductionSecurityPolicy(win)
+  }
+
   if (isDev) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173')
     return
@@ -204,6 +221,25 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+function applyProductionSecurityPolicy(win: BrowserWindow) {
+  const session = win.webContents.session
+
+  session.webRequest.onBeforeRequest((details, callback) => {
+    const url = new URL(details.url)
+    if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ws:' || url.protocol === 'wss:') {
+      callback({ cancel: true })
+      return
+    }
+    callback({ cancel: false })
+  })
+
+  session.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = details.responseHeaders ?? {}
+    responseHeaders['Content-Security-Policy'] = [PROD_CSP]
+    callback({ responseHeaders })
+  })
+}
 
 function registerIpcHandlers(api: AddonApi) {
   let session: VaultSession | null = null

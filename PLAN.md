@@ -136,7 +136,7 @@ These become authoritative once scaffolded in Step 1:
 - [ ] GUI: implement TOTP QR import with camera scan and paste fallback (SPEC K10).
 - [ ] GUI: implement Import/Export screen (SPEC K1.7) including duplicate resolution UX for CSV/Bitwarden JSON imports (SPEC S1 Scenario 2).
 - [ ] GUI: implement full Add/Edit item flows (SPEC K9) including URL match type badges and tag normalization.
-- [ ] Desktop security: add production CSP with `connect-src 'none'` (SPEC I2) and ensure networking is disabled by default.
-- [ ] CLI: enforce config `set` validation bounds (SPEC J6) to match desktop/addon behavior.
+- [x] Desktop security: add production CSP with `connect-src 'none'` (SPEC I2) and ensure networking is disabled by default.
+- [x] CLI: enforce config `set` validation bounds (SPEC J6) to match desktop/addon behavior.
 - [ ] QA/release gates: add fuzz targets + coverage measurement + Playwright smoke tests in CI (SPEC O2–O5).
 - [ ] Release: add packaging/signing workflow scaffolds and checksum publication for GitHub releases (SPEC P1–P4).
