@@ -12,6 +12,7 @@
   let query = ''
   let bridgeStatus = 'initializing'
   let bridgeAvailable = false
+  let npw = null
   let lastResult = ''
   let status = null
   let items = []
@@ -212,11 +213,13 @@
   }
 
   onMount(async () => {
+    npw = typeof window !== 'undefined' ? window['npw'] : null
+
     bridgeAvailable =
       typeof window !== 'undefined' &&
-      window.npw &&
-      typeof window.npw.coreBanner === 'function' &&
-      typeof window.npw.onVaultLocked === 'function'
+      npw &&
+      typeof npw.coreBanner === 'function' &&
+      typeof npw.onVaultLocked === 'function'
 
     if (!bridgeAvailable) {
       bridgeStatus = formatStatus(
@@ -226,7 +229,7 @@
     }
 
     try {
-      const banner = await window.npw.coreBanner()
+      const banner = await npw.coreBanner()
       bridgeStatus = formatStatus(banner)
     } catch (error) {
       bridgeStatus = formatStatus(formatError(error))
@@ -244,7 +247,7 @@
       // Best-effort: config UI falls back to defaults.
     }
 
-    detachVaultLocked = window.npw.onVaultLocked(({ reason }) => {
+    detachVaultLocked = npw.onVaultLocked(({ reason }) => {
       status = null
       items = []
       selectedItem = null
@@ -323,7 +326,7 @@
         return
       }
       lastActivityPingAt = now
-      window.npw.appActivity().catch(() => {})
+      npw.appActivity().catch(() => {})
     }
     window.addEventListener('mousemove', activityListener)
     window.addEventListener('mousedown', activityListener)
@@ -347,7 +350,7 @@
 
   const createVault = async () => {
     try {
-      await window.npw.vaultCreate({
+      await npw.vaultCreate({
         path: vaultPath,
         masterPassword,
         label: vaultLabel
@@ -364,7 +367,7 @@
 
   const unlockVault = async () => {
     try {
-      status = await window.npw.vaultUnlock({
+      status = await npw.vaultUnlock({
         path: vaultPath,
         masterPassword
       })
@@ -405,7 +408,7 @@
   const quickUnlockVault = async () => {
     quickUnlockBusy = true
     try {
-      status = await window.npw.vaultUnlockQuick({ path: vaultPath })
+      status = await npw.vaultUnlockQuick({ path: vaultPath })
       masterPassword = ''
       lastResult = `Vault quick-unlocked: ${status.path}`
       pushToast({ kind: 'success', title: 'Vault quick-unlocked', timeoutMs: 3500 })
@@ -441,11 +444,11 @@
         if (!confirmed) {
           return
         }
-        await window.npw.quickUnlockEnable()
+        await npw.quickUnlockEnable()
         lastResult = 'Quick Unlock enabled'
         pushToast({ kind: 'info', title: 'Quick Unlock enabled', timeoutMs: 3500 })
       } else {
-        await window.npw.quickUnlockDisable()
+        await npw.quickUnlockDisable()
         lastResult = 'Quick Unlock disabled'
         pushToast({ kind: 'info', title: 'Quick Unlock disabled', timeoutMs: 3500 })
       }
@@ -488,7 +491,7 @@
     recoveryError = ''
     recoveryBusy = true
     try {
-      recoveryBackups = await window.npw.vaultBackupsList({ path })
+      recoveryBackups = await npw.vaultBackupsList({ path })
       recoverySelectedBackupPath = recoveryBackups[0]?.path ?? ''
       recoveryVisible = recoveryBackups.length > 0
       return recoveryVisible
@@ -516,15 +519,15 @@
     recoveryBusy = true
     recoveryError = ''
     try {
-      await window.npw.vaultCheck({ path: recoverySelectedBackupPath, masterPassword })
-      const result = await window.npw.vaultRecoverFromBackup({
+      await npw.vaultCheck({ path: recoverySelectedBackupPath, masterPassword })
+      const result = await npw.vaultRecoverFromBackup({
         path: recoveryVaultPath,
         backupPath: recoverySelectedBackupPath
       })
       if (result?.corruptPath) {
         lastResult = `Preserved corrupt vault at ${result.corruptPath}`
       }
-      status = await window.npw.vaultUnlock({
+      status = await npw.vaultUnlock({
         path: recoveryVaultPath,
         masterPassword
       })
@@ -544,7 +547,7 @@
 
   const lockVault = async () => {
     try {
-      await window.npw.vaultLock()
+      await npw.vaultLock()
       status = null
       items = []
       selectedItem = null
@@ -620,7 +623,7 @@
   }
 
   const refreshRecents = async () => {
-    recents = await window.npw.vaultRecentsList()
+    recents = await npw.vaultRecentsList()
     await refreshQuickUnlockForPath()
   }
 
@@ -631,7 +634,7 @@
       return
     }
     try {
-      quickUnlockForPath = await window.npw.quickUnlockStatusForPath({ path: safePath })
+      quickUnlockForPath = await npw.quickUnlockStatusForPath({ path: safePath })
     } catch (error) {
       quickUnlockForPath = { available: false, configured: false, enabled: false, error: formatError(error) }
     }
@@ -643,7 +646,7 @@
       return
     }
     try {
-      quickUnlockForCurrent = await window.npw.quickUnlockStatusCurrent()
+      quickUnlockForCurrent = await npw.quickUnlockStatusCurrent()
     } catch (error) {
       quickUnlockForCurrent = { available: false, configured: true, enabled: false, error: formatError(error) }
     }
@@ -652,7 +655,7 @@
   const refreshConfig = async () => {
     settingsError = ''
     try {
-      appConfig = await window.npw.configLoad()
+      appConfig = await npw.configLoad()
       if (appConfig?.security) {
         settingsClipboardTimeoutSeconds = appConfig.security.clipboardTimeoutSeconds
         settingsAutoLockMinutes = appConfig.security.autoLockMinutes
@@ -678,23 +681,23 @@
     settingsSaving = true
     settingsError = ''
     try {
-      appConfig = await window.npw.configSet({
+      appConfig = await npw.configSet({
         key: 'security.clipboard_timeout_seconds',
         value: String(Number(settingsClipboardTimeoutSeconds))
       })
-      appConfig = await window.npw.configSet({
+      appConfig = await npw.configSet({
         key: 'security.auto_lock_minutes',
         value: String(Number(settingsAutoLockMinutes))
       })
-      appConfig = await window.npw.configSet({
+      appConfig = await npw.configSet({
         key: 'security.lock_on_suspend',
         value: String(Boolean(settingsLockOnSuspend))
       })
-      appConfig = await window.npw.configSet({
+      appConfig = await npw.configSet({
         key: 'security.reveal_requires_confirm',
         value: String(Boolean(settingsRevealRequiresConfirm))
       })
-      appConfig = await window.npw.configSet({
+      appConfig = await npw.configSet({
         key: 'logging.level',
         value: String(settingsLogLevel)
       })
@@ -726,7 +729,7 @@
 
   const removeRecent = async (vault) => {
     try {
-      await window.npw.vaultRecentsRemove({ path: vault.path })
+      await npw.vaultRecentsRemove({ path: vault.path })
       await refreshRecents()
       lastResult = `Removed ${vault.path} from recents`
       pushToast({ kind: 'success', title: 'Removed recent vault', timeoutMs: 3500 })
@@ -747,7 +750,7 @@
       return
     }
     try {
-      const picked = await window.npw.vaultDialogOpen()
+      const picked = await npw.vaultDialogOpen()
       if (!picked) {
         return
       }
@@ -771,7 +774,7 @@
       return
     }
     try {
-      const picked = await window.npw.vaultDialogCreate()
+      const picked = await npw.vaultDialogCreate()
       if (!picked) {
         return
       }
@@ -787,7 +790,7 @@
 
   const refreshItems = async () => {
     try {
-      items = await window.npw.itemList({ query: query.length > 0 ? query : null })
+      items = await npw.itemList({ query: query.length > 0 ? query : null })
       if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
         selectedItem = null
         loginDetail = null
@@ -825,13 +828,13 @@
     importBusy = true
     importError = ''
     try {
-      const picked = await window.npw.importDialogCsv()
+      const picked = await npw.importDialogCsv()
       if (!picked) {
         return
       }
       importType = 'csv'
       importInputPath = picked
-      importPreview = await window.npw.importCsvPreview({ inputPath: picked })
+      importPreview = await npw.importCsvPreview({ inputPath: picked })
       const nextDecisions = {}
       for (const dup of importPreview.duplicates ?? []) {
         nextDecisions[dup.sourceIndex] = 'skip'
@@ -853,13 +856,13 @@
     importBusy = true
     importError = ''
     try {
-      const picked = await window.npw.importDialogBitwarden()
+      const picked = await npw.importDialogBitwarden()
       if (!picked) {
         return
       }
       importType = 'bitwarden'
       importInputPath = picked
-      importPreview = await window.npw.importBitwardenPreview({ inputPath: picked })
+      importPreview = await npw.importBitwardenPreview({ inputPath: picked })
       const nextDecisions = {}
       for (const dup of importPreview.duplicates ?? []) {
         nextDecisions[dup.sourceIndex] = 'skip'
@@ -894,8 +897,8 @@
       }))
       const result =
         importType === 'csv'
-          ? await window.npw.importCsvApply({ inputPath: importInputPath, decisions })
-          : await window.npw.importBitwardenApply({ inputPath: importInputPath, decisions })
+          ? await npw.importCsvApply({ inputPath: importInputPath, decisions })
+          : await npw.importBitwardenApply({ inputPath: importInputPath, decisions })
 
       await refreshItems()
       lastResult = `Imported ${result.imported} items (skipped ${result.skipped}, overwritten ${result.overwritten})`
@@ -918,7 +921,7 @@
 
   const exportCsv = async ({ includeSecrets }) => {
     try {
-      const outputPath = await window.npw.exportDialogCsv()
+      const outputPath = await npw.exportDialogCsv()
       if (!outputPath) {
         return
       }
@@ -929,7 +932,7 @@
           return
         }
       }
-      const count = await window.npw.exportCsv({ outputPath, includeSecrets, acknowledged })
+      const count = await npw.exportCsv({ outputPath, includeSecrets, acknowledged })
       lastResult = `Exported ${count} items to ${outputPath}`
       pushToast({ kind: 'success', title: lastResult, timeoutMs: 4500 })
     } catch (error) {
@@ -941,7 +944,7 @@
 
   const exportJson = async ({ includeSecrets }) => {
     try {
-      const outputPath = await window.npw.exportDialogJson()
+      const outputPath = await npw.exportDialogJson()
       if (!outputPath) {
         return
       }
@@ -952,7 +955,7 @@
           return
         }
       }
-      const count = await window.npw.exportJson({ outputPath, includeSecrets, acknowledged })
+      const count = await npw.exportJson({ outputPath, includeSecrets, acknowledged })
       lastResult = `Exported ${count} items to ${outputPath}`
       pushToast({ kind: 'success', title: lastResult, timeoutMs: 4500 })
     } catch (error) {
@@ -964,7 +967,7 @@
 
   const openEncryptedExport = async () => {
     encryptedExportError = ''
-    const picked = await window.npw.exportDialogEncrypted()
+    const picked = await npw.exportDialogEncrypted()
     if (!picked) {
       return
     }
@@ -1012,7 +1015,7 @@
     encryptedExportError = ''
     try {
       const outputPath = encryptedExportOutputPath
-      const count = await window.npw.exportEncrypted({
+      const count = await npw.exportEncrypted({
         outputPath,
         exportPassword: encryptedExportPassword,
         masterPassword: encryptedExportMasterPassword,
@@ -1032,7 +1035,7 @@
 
   const addNote = async () => {
     try {
-      const id = await window.npw.noteAdd({
+      const id = await npw.noteAdd({
         title: newNoteTitle,
         body: newNoteBody,
         tags: parseTagsRaw(newNoteTagsRaw),
@@ -1065,7 +1068,7 @@
     noteEditBusy = true
     noteEditError = ''
     try {
-      await window.npw.noteUpdate({
+      await npw.noteUpdate({
         id,
         title: noteEditTitle,
         body: noteEditBody,
@@ -1090,7 +1093,7 @@
 
   const addLogin = async () => {
     try {
-      const id = await window.npw.loginAdd({
+      const id = await npw.loginAdd({
         title: newLoginTitle,
         urls: normalizeUrlInputs(newLoginUrls),
         username: newLoginUsername.length > 0 ? newLoginUsername : null,
@@ -1129,7 +1132,7 @@
     loginEditBusy = true
     loginEditError = ''
     try {
-      await window.npw.loginUpdate({
+      await npw.loginUpdate({
         id,
         title: loginEditTitle,
         urls: normalizeUrlInputs(loginEditUrls),
@@ -1163,7 +1166,7 @@
     passkeyEditBusy = true
     passkeyEditError = ''
     try {
-      await window.npw.passkeyRefUpdate({
+      await npw.passkeyRefUpdate({
         id,
         title: passkeyEditTitle,
         notes: passkeyEditNotes.length > 0 ? passkeyEditNotes : null,
@@ -1190,7 +1193,7 @@
     newPasskeyBusy = true
     newPasskeyError = ''
     try {
-      const id = await window.npw.passkeyRefAdd({
+      const id = await npw.passkeyRefAdd({
         title: newPasskeyTitle,
         rpId: newPasskeyRpId,
         rpName: newPasskeyRpName.trim().length > 0 ? newPasskeyRpName : null,
@@ -1235,7 +1238,7 @@
 
     const id = selectedItem.id
     try {
-      const deleted = await window.npw.itemDelete({ id })
+      const deleted = await npw.itemDelete({ id })
       selectedItem = null
       loginDetail = null
       noteDetail = null
@@ -1268,7 +1271,7 @@
     const itemId = item.id
     try {
       if (item.itemType === 'login') {
-        loginDetail = await window.npw.loginGet({ id: itemId })
+        loginDetail = await npw.loginGet({ id: itemId })
         loginEditTitle = loginDetail.title
         loginEditUrls = ensureUrlEditorRows(loginDetail.urls)
         loginEditUsername = loginDetail.username ?? ''
@@ -1301,7 +1304,7 @@
       }
 
       if (item.itemType === 'note') {
-        noteDetail = await window.npw.noteGet({ id: itemId })
+        noteDetail = await npw.noteGet({ id: itemId })
         noteEditTitle = noteDetail.title
         noteEditBody = noteDetail.body
         noteEditTagsRaw = formatTagsRaw(noteDetail.tags)
@@ -1313,7 +1316,7 @@
       }
 
       if (item.itemType === 'passkey_ref') {
-        passkeyDetail = await window.npw.passkeyRefGet({ id: itemId })
+        passkeyDetail = await npw.passkeyRefGet({ id: itemId })
         passkeyEditTitle = passkeyDetail.title
         passkeyEditNotes = passkeyDetail.notes ?? ''
         passkeyEditTagsRaw = formatTagsRaw(passkeyDetail.tags)
@@ -1337,7 +1340,7 @@
       return
     }
     try {
-      await window.npw.loginCopyUsername({ id: selectedItem.id })
+      await npw.loginCopyUsername({ id: selectedItem.id })
       const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
       const message =
         Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
@@ -1362,7 +1365,7 @@
       return
     }
     try {
-      await window.npw.loginCopyPassword({ id: selectedItem.id })
+      await npw.loginCopyPassword({ id: selectedItem.id })
       const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
       const message =
         Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
@@ -1393,7 +1396,7 @@
       }
     }
     try {
-      const password = await window.npw.loginRevealPassword({ id: selectedItem.id })
+      const password = await npw.loginRevealPassword({ id: selectedItem.id })
       clearRevealedPassword()
       revealedPassword = password
       revealPasswordTimeoutId = setTimeout(() => {
@@ -1428,7 +1431,7 @@
     }
     try {
       clearRevealedPassword()
-      const mode = await window.npw.loginGenerateReplacePassword({ id: selectedItem.id })
+      const mode = await npw.loginGenerateReplacePassword({ id: selectedItem.id })
       lastResult = `Generated new ${mode} password and replaced`
       pushToast({ kind: 'success', title: 'Generated and replaced password', timeoutMs: 3500 })
     } catch (error) {
@@ -1443,7 +1446,7 @@
       return
     }
     try {
-      await window.npw.loginCopyTotp({ id: selectedItem.id })
+      await npw.loginCopyTotp({ id: selectedItem.id })
       const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
       const message =
         Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
@@ -1464,7 +1467,7 @@
   }
 
   const refreshTotp = async (id) => {
-    totp = await window.npw.loginTotpGet({ id })
+    totp = await npw.loginTotpGet({ id })
   }
 
   const toggleTotpQr = async () => {
@@ -1477,7 +1480,7 @@
     }
 
     try {
-      const svg = await window.npw.loginTotpQrSvg({ id: selectedItem.id })
+      const svg = await npw.loginTotpQrSvg({ id: selectedItem.id })
       totpQrUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
       totpQrVisible = true
       lastResult = 'Rendered TOTP QR code'
@@ -1606,7 +1609,7 @@
     totpImportError = ''
     stopTotpImportCamera()
     try {
-      await window.npw.loginTotpSet({ id, value })
+      await npw.loginTotpSet({ id, value })
       await refreshItems()
       const refreshed = items.find((item) => item.id === id)
       if (refreshed) {
@@ -1628,7 +1631,7 @@
       return
     }
     try {
-      await window.npw.passkeyOpenSite({ id: selectedItem.id })
+      await npw.passkeyOpenSite({ id: selectedItem.id })
       lastResult = 'Opened relying party site'
       pushToast({ kind: 'info', title: 'Opened relying party site', timeoutMs: 3500 })
     } catch (error) {
@@ -1646,7 +1649,7 @@
 
   const openPasskeyManager = async () => {
     try {
-      await window.npw.passkeyOpenManager()
+      await npw.passkeyOpenManager()
       lastResult = 'Opened OS passkey manager'
       pushToast({ kind: 'info', title: 'Opened OS passkey manager', timeoutMs: 3500 })
     } catch (error) {
@@ -1677,7 +1680,7 @@
   }
 </script>
 
-<main class="shell">
+<main class="app">
   {#if toasts.length > 0}
     <div class="toast-host" aria-live="polite">
       {#each toasts as toast (toast.id)}
@@ -1711,8 +1714,28 @@
     </div>
   {/if}
 
-  <h1>{APP_TITLE}</h1>
-  <p>{bridgeStatus}</p>
+  <header class="topbar">
+    <div class="wordmark">
+      <span class="mark" aria-hidden="true"></span>
+      <div>
+        <h1>{APP_TITLE}</h1>
+        <p class="subhead">{bridgeStatus}</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span class="chip" data-tone={bridgeAvailable ? 'ok' : 'warn'}>
+        {bridgeAvailable ? 'Bridge ready' : 'Electron required'}
+      </span>
+      {#if status}
+        <span class="chip" data-tone="neutral">{status.label} · {status.itemCount} items</span>
+      {:else}
+        <span class="chip" data-tone="neutral">Locked</span>
+      {/if}
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
 
   <section class="picker">
     <h2>Recent Vaults</h2>
@@ -1852,10 +1875,18 @@
     </section>
   {/if}
 
-  <label>
-    Search
-    <input bind:value={query} on:input={refreshItems} disabled={!status} />
-  </label>
+    </aside>
+
+    <section class="workspace">
+      <label class="search">
+        <span class="label">Search</span>
+        <input
+          bind:value={query}
+          on:input={refreshItems}
+          disabled={!status}
+          placeholder="Search titles, usernames, tags…"
+        />
+      </label>
 
   {#if status}
     <section class="import-export">
@@ -2442,6 +2473,9 @@
     </section>
   {/if}
 
+    </section>
+  </div>
+
   {#if totpImportVisible}
     <div class="modal-backdrop">
       <dialog class="modal" open aria-labelledby="totp-import-title">
@@ -2594,25 +2628,172 @@
 </main>
 
 <style>
-  .shell {
+  .app {
+    height: 100vh;
     display: grid;
-    gap: 0.75rem;
-    width: min(40rem, 90vw);
+    grid-template-rows: auto 1fr;
+    gap: 1rem;
+    padding: 1.15rem;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--panel);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(10px);
+  }
+
+  .wordmark {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    min-width: 0;
+  }
+
+  .mark {
+    width: 2.35rem;
+    height: 2.35rem;
+    border-radius: 0.95rem;
+    background:
+      radial-gradient(70% 70% at 30% 25%, rgba(255, 255, 255, 0.9), transparent 55%),
+      conic-gradient(from 210deg, rgba(11, 114, 133, 0.95), rgba(180, 83, 9, 0.82), rgba(6, 118, 71, 0.82), rgba(11, 114, 133, 0.95));
+    box-shadow: 0 10px 22px rgba(11, 27, 38, 0.22);
+  }
+
+  .topbar h1 {
+    margin: 0;
+    font-size: 1.15rem;
+    letter-spacing: 0.01em;
+  }
+
+  .subhead {
+    margin: 0.05rem 0 0;
+    font-size: 0.9rem;
+    color: var(--ink-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 55vw;
+  }
+
+  .topbar-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--ink-2);
+    font-size: 0.85rem;
+    font-weight: 650;
+  }
+
+  .chip[data-tone='ok'] {
+    border-color: rgba(6, 118, 71, 0.35);
+    background: rgba(6, 118, 71, 0.12);
+    color: var(--success);
+  }
+
+  .chip[data-tone='warn'] {
+    border-color: rgba(180, 83, 9, 0.35);
+    background: rgba(180, 83, 9, 0.12);
+    color: rgba(120, 53, 15, 0.95);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 22.5rem minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+    min-height: 0;
+  }
+
+  .sidebar,
+  .workspace {
+    display: grid;
+    gap: 0.85rem;
+    min-height: 0;
+    overflow: auto;
+    padding-right: 0.35rem;
+  }
+
+  .picker,
+  .settings,
+  .quick-unlock,
+  .import-export,
+  .add-login,
+  .add-note,
+  .add-passkey,
+  .items,
+  .detail,
+  .search {
+    display: grid;
+    gap: 0.85rem;
+    padding: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--panel);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(10px);
+  }
+
+  .picker h2,
+  .settings h2,
+  .quick-unlock h2,
+  .import-export h2,
+  .add-login h2,
+  .add-note h2,
+  .add-passkey h2,
+  .items h2,
+  .detail h2 {
+    margin: 0;
+    font-size: 1rem;
+    letter-spacing: 0.02em;
   }
 
   label {
     display: grid;
-    gap: 0.35rem;
-    font-weight: 600;
+    gap: 0.4rem;
+    font-weight: 650;
+    color: var(--ink-2);
+    font-size: 0.9rem;
   }
 
   input,
   textarea,
   select {
-    padding: 0.55rem 0.6rem;
-    border: 1px solid #7a919f;
-    border-radius: 0.35rem;
-    font: inherit;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--ink);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: rgba(11, 27, 38, 0.48);
+  }
+
+  input:disabled,
+  textarea:disabled,
+  select:disabled {
+    opacity: 0.75;
+    background: rgba(255, 255, 255, 0.5);
   }
 
   textarea {
@@ -2625,160 +2806,62 @@
     flex-wrap: wrap;
   }
 
-  .picker {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid #93a8b5;
-    border-radius: 0.75rem;
-    background: #f4fbff;
-  }
-
-  .picker h2 {
-    margin: 0;
-  }
-
-  .add-note,
-  .add-login {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid #93a8b5;
-    border-radius: 0.75rem;
-    background: #f4fbff;
-  }
-
-  .add-note h2,
-  .add-login h2 {
-    margin: 0;
-  }
-
-  .import-export {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid #93a8b5;
-    border-radius: 0.75rem;
-    background: #f4fbff;
-  }
-
-  .import-export h2 {
-    margin: 0;
-  }
-
-  .import-export-grid {
-    display: grid;
-    gap: 0.75rem;
-    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-    align-items: start;
-  }
-
-  .quick-unlock {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid #93a8b5;
-    border-radius: 0.75rem;
-    background: #f4fbff;
-  }
-
-  .quick-unlock h2 {
-    margin: 0;
-  }
-
-  .import-preview {
-    display: grid;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  .plain-list {
-    margin: 0.5rem 0 0;
-    padding-left: 1.25rem;
-  }
-
-  .duplicate-list {
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .duplicate {
-    border: 1px solid #93a8b5;
-    border-radius: 0.5rem;
-    background: #ffffff;
-    padding: 0.6rem 0.75rem;
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .duplicate-meta {
-    display: grid;
-    gap: 0.15rem;
-  }
-
-  .duplicate-actions {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .recent-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .recent {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: space-between;
-    align-items: center;
-    border: 1px solid #dde8ee;
-    border-radius: 0.5rem;
-    padding: 0.6rem 0.75rem;
-    background: #ffffff;
-  }
-
-  .recent-meta {
-    display: grid;
-    gap: 0.15rem;
-    min-width: 0;
-  }
-
-  .recent-meta span {
-    word-break: break-word;
-  }
-
   button {
-    border: 1px solid #31536b;
-    border-radius: 0.35rem;
-    padding: 0.55rem 0.8rem;
+    border: 1px solid rgba(4, 55, 66, 0.32);
+    border-radius: 999px;
+    padding: 0.55rem 0.9rem;
     cursor: pointer;
-    background: #23465f;
-    color: #f4fbff;
-    font: inherit;
+    background:
+      radial-gradient(80% 120% at 20% 0%, rgba(255, 255, 255, 0.35), transparent 55%),
+      linear-gradient(135deg, rgba(11, 114, 133, 0.95), rgba(4, 55, 66, 0.95));
+    color: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 10px 25px rgba(11, 27, 38, 0.22);
+    transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+  }
+
+  button:hover:not(:disabled) {
+    filter: brightness(1.03) saturate(1.02);
+    transform: translateY(-1px);
+    box-shadow: 0 14px 32px rgba(11, 27, 38, 0.25);
+  }
+
+  button:active:not(:disabled) {
+    transform: translateY(0);
+    filter: brightness(0.99);
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    box-shadow: none;
+    transform: none;
   }
 
   button.secondary {
-    border-color: #93a8b5;
-    background: #dde8ee;
-    color: #23465f;
+    border-color: var(--border);
+    background: rgba(255, 255, 255, 0.65);
+    color: var(--ink);
+    box-shadow: none;
+  }
+
+  button.secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: none;
   }
 
   pre {
     margin: 0;
-    background: #dde8ee;
-    border: 1px solid #93a8b5;
-    border-radius: 0.5rem;
-    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.85rem;
     white-space: pre-wrap;
     word-break: break-word;
+    box-shadow: var(--shadow-sm);
   }
 
   .result {
-    min-height: 3.5rem;
+    min-height: 3.2rem;
   }
 
   .toast-host {
@@ -2791,29 +2874,41 @@
     z-index: 1100;
   }
 
+  @keyframes toast-in {
+    from {
+      transform: translateY(-6px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
   .toast {
-    border: 1px solid #93a8b5;
-    border-radius: 0.75rem;
-    background: #ffffff;
-    padding: 0.75rem;
-    box-shadow: 0 16px 45px rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: rgba(255, 255, 255, 0.92);
+    padding: 0.85rem;
+    box-shadow: var(--shadow-lg);
     display: grid;
     gap: 0.5rem;
+    animation: toast-in 160ms ease-out;
   }
 
   .toast[data-kind='error'] {
-    border-color: #f1a1a1;
-    background: #fff1f1;
+    border-color: rgba(180, 35, 24, 0.35);
+    background: rgba(180, 35, 24, 0.08);
   }
 
   .toast[data-kind='success'] {
-    border-color: #8fd8a6;
-    background: #f0fdf4;
+    border-color: rgba(6, 118, 71, 0.35);
+    background: rgba(6, 118, 71, 0.08);
   }
 
   .toast[data-kind='info'] {
-    border-color: #8ab7ea;
-    background: #eff6ff;
+    border-color: rgba(11, 114, 133, 0.35);
+    background: rgba(11, 114, 133, 0.08);
   }
 
   .toast-header {
@@ -2824,13 +2919,13 @@
   }
 
   .toast-close {
-    padding: 0 0.55rem;
+    padding: 0 0.7rem;
     height: 2rem;
   }
 
   .toast-detail {
-    background: rgba(35, 70, 95, 0.08);
-    border-color: rgba(35, 70, 95, 0.2);
+    background: rgba(11, 27, 38, 0.05);
+    border-color: rgba(11, 27, 38, 0.12);
   }
 
   .toast-actions {
@@ -2839,8 +2934,44 @@
     gap: 0.5rem;
   }
 
-  .items h2 {
+  .recent-list {
+    list-style: none;
     margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .recent {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid rgba(11, 27, 38, 0.1);
+    border-radius: var(--radius-md);
+    padding: 0.65rem 0.75rem;
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .recent-meta {
+    display: grid;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  .recent-meta span {
+    word-break: break-word;
+  }
+
+  .filters {
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: 1fr 1fr;
+    align-items: end;
+  }
+
+  .filters .inline {
+    grid-column: 1 / -1;
   }
 
   .items ul {
@@ -2852,54 +2983,64 @@
     list-style: none;
     padding-left: 0;
     display: grid;
-    gap: 0.35rem;
+    gap: 0.45rem;
   }
 
   .row {
     width: 100%;
     text-align: left;
-    border: 1px solid #93a8b5;
-    border-radius: 0.5rem;
-    padding: 0.6rem 0.75rem;
-    background: #f4fbff;
+    border: 1px solid rgba(11, 27, 38, 0.12);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 0.8rem;
+    background: rgba(255, 255, 255, 0.6);
     color: inherit;
+    box-shadow: 0 1px 0 rgba(11, 27, 38, 0.05);
+    transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+
+  .row:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(11, 27, 38, 0.18);
   }
 
   li.selected .row {
-    border-color: #31536b;
-    box-shadow: 0 0 0 2px rgba(49, 83, 107, 0.15);
+    border-color: rgba(11, 114, 133, 0.55);
+    background: rgba(11, 114, 133, 0.1);
+    box-shadow: var(--ring);
   }
 
   .meta {
     display: block;
     font-size: 0.9rem;
-    opacity: 0.75;
+    color: var(--ink-3);
     margin-top: 0.15rem;
   }
 
   .muted {
-    opacity: 0.75;
+    color: var(--ink-3);
     margin: 0;
   }
 
   .detail {
     display: grid;
-    gap: 0.75rem;
+    gap: 0.85rem;
   }
 
   .field {
     display: grid;
-    gap: 0.25rem;
+    gap: 0.35rem;
   }
 
   .label {
-    font-weight: 700;
+    font-weight: 750;
+    color: var(--ink-2);
   }
 
   .inline {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.55rem;
     flex-wrap: wrap;
   }
 
@@ -2911,9 +3052,9 @@
   .qr {
     margin-top: 0.5rem;
     padding: 0.75rem;
-    border: 1px solid #93a8b5;
-    border-radius: 0.5rem;
-    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.82);
     width: fit-content;
   }
 
@@ -2924,26 +3065,27 @@
   }
 
   .note {
-    background: #f4fbff;
-    border: 1px solid #93a8b5;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid var(--border);
   }
 
   .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    font-family: var(--font-mono);
   }
 
   .callout {
     margin: 0;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid #e0d2a3;
-    border-radius: 0.5rem;
-    background: #fff6d7;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid rgba(180, 83, 9, 0.28);
+    border-radius: var(--radius-lg);
+    background: rgba(180, 83, 9, 0.12);
+    color: rgba(120, 53, 15, 0.96);
   }
 
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(12, 21, 27, 0.55);
+    background: rgba(11, 27, 38, 0.55);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2955,18 +3097,19 @@
     width: min(44rem, 92vw);
     max-height: 90vh;
     overflow: auto;
-    background: #ffffff;
-    border: 1px solid #93a8b5;
-    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 1rem;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-lg);
     display: grid;
-    gap: 0.75rem;
+    gap: 0.85rem;
+    backdrop-filter: blur(12px);
   }
 
   .totp-import {
     display: grid;
-    gap: 0.75rem;
+    gap: 0.85rem;
   }
 
   .totp-import-preview {
@@ -2977,24 +3120,24 @@
   .camera {
     width: 100%;
     aspect-ratio: 4 / 3;
-    background: rgba(12, 21, 27, 0.9);
-    border: 1px solid #93a8b5;
-    border-radius: 0.5rem;
+    background: rgba(11, 27, 38, 0.92);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   .backup-list {
     display: grid;
-    gap: 0.5rem;
+    gap: 0.6rem;
   }
 
   .backup-row {
     display: flex;
     gap: 0.75rem;
     align-items: flex-start;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid #93a8b5;
-    border-radius: 0.5rem;
-    background: #f4fbff;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: rgba(255, 255, 255, 0.72);
   }
 
   .backup-row input {
@@ -3010,5 +3153,15 @@
   .backup-path {
     font-size: 0.85rem;
     word-break: break-word;
+  }
+
+  @media (max-width: 1100px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+
+    .subhead {
+      max-width: 82vw;
+    }
   }
 </style>
