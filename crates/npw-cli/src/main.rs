@@ -106,6 +106,8 @@ enum VaultCommand {
     Check(VaultPathArgs),
     Unlock(VaultPathArgs),
     Status(VaultPathArgs),
+    Backup(VaultBackupArgs),
+    ChangePassword(VaultChangePasswordArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -154,6 +156,20 @@ struct VaultInitArgs {
     argon_t: u32,
     #[arg(long, default_value_t = 4)]
     argon_p: u32,
+}
+
+#[derive(Debug, Args)]
+struct VaultBackupArgs {
+    path: Option<PathBuf>,
+    #[arg(long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct VaultChangePasswordArgs {
+    path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    rotate_vault_key: bool,
 }
 
 #[derive(Debug, Args)]
@@ -462,6 +478,8 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
             VaultCommand::Check(args) => handle_vault_check(cli, &config, args),
             VaultCommand::Unlock(args) => handle_vault_unlock(cli, &config, args),
             VaultCommand::Status(args) => handle_vault_status(cli, &config, args),
+            VaultCommand::Backup(args) => handle_vault_backup(cli, &config, args),
+            VaultCommand::ChangePassword(args) => handle_vault_change_password(cli, &config, args),
         },
         Command::Item { command } => handle_item_command(cli, &config, command),
         Command::Totp(args) => handle_totp(cli, &config, args),
@@ -588,6 +606,88 @@ fn handle_vault_status(
                 "iterations": header.kdf_params.iterations,
                 "parallelism": header.kdf_params.parallelism
             }
+        }),
+    })
+}
+
+fn handle_vault_backup(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &VaultBackupArgs,
+) -> Result<CommandOutput, CliError> {
+    let path = resolve_vault_path(cli, config, args.path.clone())?;
+    let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
+    let header = parse_vault_header(&vault_bytes).map_err(map_vault_error)?;
+    let output_path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| default_backup_output_path(&path));
+    if output_path == path {
+        return Err(CliError::usage(
+            "backup output path must differ from the vault path",
+        ));
+    }
+
+    write_vault(&output_path, &vault_bytes, config.backup.max_retained)
+        .map_err(map_storage_error)?;
+
+    Ok(CommandOutput {
+        message: format!("Created backup at {}", output_path.display()),
+        payload: json!({
+            "path": path,
+            "output": output_path,
+            "label": header.vault_label,
+            "item_count": header.item_count
+        }),
+    })
+}
+
+fn handle_vault_change_password(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &VaultChangePasswordArgs,
+) -> Result<CommandOutput, CliError> {
+    if cli.non_interactive {
+        return Err(CliError::usage(
+            "vault change-password does not support --non-interactive",
+        ));
+    }
+
+    let path = resolve_vault_path(cli, config, args.path.clone())?;
+    let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
+    let current_password = read_master_password(false, false)?;
+    let unlocked = unlock_vault_file(&vault_bytes, &current_password).map_err(map_vault_error)?;
+    let new_password = read_master_password(false, true)?;
+    validate_master_password(&new_password)?;
+
+    let rewritten = if args.rotate_vault_key {
+        create_vault_file(&CreateVaultInput {
+            master_password: &new_password,
+            payload_plaintext: &unlocked.payload_plaintext,
+            item_count: unlocked.header.item_count,
+            vault_label: Some(&unlocked.header.vault_label),
+            kdf_params: unlocked.header.kdf_params,
+        })
+        .map_err(map_vault_error)?
+    } else {
+        reencrypt_vault_file(&ReencryptVaultInput {
+            master_password: &new_password,
+            payload_plaintext: &unlocked.payload_plaintext,
+            item_count: unlocked.header.item_count,
+            header: &unlocked.header,
+            envelope: &unlocked.envelope,
+        })
+        .map_err(map_vault_error)?
+    };
+
+    write_vault(&path, &rewritten, config.backup.max_retained).map_err(map_storage_error)?;
+
+    Ok(CommandOutput {
+        message: "Master password updated".to_owned(),
+        payload: json!({
+            "path": path,
+            "item_count": unlocked.header.item_count,
+            "rotate_vault_key": args.rotate_vault_key
         }),
     })
 }
@@ -1418,6 +1518,18 @@ fn normalize_tags(raw_tags: &[String]) -> Vec<String> {
         }
     }
     tags
+}
+
+fn default_backup_output_path(vault_path: &Path) -> PathBuf {
+    let parent = vault_path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = vault_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vault.npw");
+    parent.join(format!(
+        "{file_name}.manual-backup-{}.npw",
+        unix_seconds_now()
+    ))
 }
 
 fn build_login_totp(args: &ItemAddLoginArgs) -> Result<Option<TotpConfig>, CliError> {

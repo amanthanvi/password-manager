@@ -106,4 +106,5 @@ These become authoritative once scaffolded in Step 1:
 - [x] M6 slice complete: strict payload schemas, encrypted search index rebuild/query, item CRUD/search commands, lock-protected writes, encrypted backups + compaction, and vault re-encryption path for item updates.
 - [x] M6 slice complete: RFC 6238 TOTP core with SHA1/SHA256/SHA512 + `--at` deterministic output, `otpauth://` parsing, and CLI `npw totp`.
 - [x] M6 slice complete: CLI recovery (`npw recover`, `--auto`) with backup listing, header validation, and restore flow that preserves the current vault as `.corrupt`.
-- [ ] M6 in progress: remaining CLI parity (import/export, migrations, password change/backup helpers, passkey commands) and structured audit logging.
+- [x] M6 slice complete: `vault backup` and `vault change-password` (including `--rotate-vault-key`) with validation, backup-on-write behavior, and smoke verification.
+- [ ] M6 in progress: remaining CLI parity (import/export, migrations, passkey commands) and structured audit logging.
