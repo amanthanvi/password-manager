@@ -59,6 +59,8 @@ declare global {
   interface Window {
     npw: {
       coreBanner: () => Promise<string>
+      appActivity: () => Promise<boolean>
+      onVaultLocked: (callback: (payload: { reason: string }) => void) => () => void
       vaultRecentsList: () => Promise<RecentVault[]>
       vaultRecentsRemove: (payload: { path: string }) => Promise<boolean>
       vaultDialogOpen: () => Promise<string | null>

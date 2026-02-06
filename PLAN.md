@@ -122,3 +122,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop can add and view secure notes, persisting changes via the native session + atomic vault writes.
 - [x] M9 slice complete: desktop can add login items and persist them; passwords are never returned to the renderer.
 - [x] M9 slice complete: desktop supports soft-delete for items (tombstones) and persists updates safely.
+- [x] M9 slice complete: desktop auto-locks after inactivity and locks on suspend/lock screen, notifying the renderer.

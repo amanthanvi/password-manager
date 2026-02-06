@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url)
 
 const DEFAULT_CLIPBOARD_CLEAR_SECONDS = 30
 const MAX_RECENT_VAULTS = 10
+const DEFAULT_AUTO_LOCK_MS = 5 * 60 * 1000
 
 type VaultStatus = {
   path: string
@@ -140,8 +141,18 @@ function registerIpcHandlers(api: AddonApi) {
   let session: VaultSession | null = null
   let clipboardClear: { token: Buffer; digest: string; timeoutId: NodeJS.Timeout } | null = null
   const recentsPath = path.join(app.getPath('userData'), 'recent-vaults.json')
+  let autoLockTimer: NodeJS.Timeout | null = null
 
   ipcMain.handle('core.banner', () => api.coreBanner())
+  ipcMain.handle('app.activity', () => {
+    resetAutoLockTimer()
+    return true
+  })
+
+  void app.whenReady().then(() => {
+    powerMonitor.on('suspend', () => lockSession('suspend'))
+    powerMonitor.on('lock-screen', () => lockSession('lock-screen'))
+  })
 
   ipcMain.handle('vault.recents.list', async () => loadRecents())
   ipcMain.handle('vault.recents.remove', async (_event, payload: { path: string }) => {
@@ -200,13 +211,11 @@ function registerIpcHandlers(api: AddonApi) {
     session = api.vaultUnlock(safePath, safePassword)
     const status = session.status()
     void upsertRecentVault(status.path, status.label)
+    resetAutoLockTimer()
     return status
   })
   ipcMain.handle('vault.lock', () => {
-    if (session) {
-      session.lock()
-      session = null
-    }
+    lockSession('manual')
     return true
   })
   ipcMain.handle('item.list', (_event, payload: { query?: string | null }) => {
@@ -351,6 +360,36 @@ function registerIpcHandlers(api: AddonApi) {
       }
     }, timeoutSeconds * 1000)
     clipboardClear = { token, digest, timeoutId }
+  }
+
+  function resetAutoLockTimer() {
+    if (!session) {
+      return
+    }
+    if (autoLockTimer) {
+      clearTimeout(autoLockTimer)
+    }
+    autoLockTimer = setTimeout(() => {
+      lockSession('idle')
+    }, DEFAULT_AUTO_LOCK_MS)
+  }
+
+  function lockSession(reason: string) {
+    if (autoLockTimer) {
+      clearTimeout(autoLockTimer)
+      autoLockTimer = null
+    }
+    if (session) {
+      session.lock()
+      session = null
+    }
+    notifyVaultLocked(reason)
+  }
+
+  function notifyVaultLocked(reason: string) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('vault.locked', { reason })
+    }
   }
 
   async function loadRecents(): Promise<RecentVault[]> {

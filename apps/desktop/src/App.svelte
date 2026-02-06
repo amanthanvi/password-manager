@@ -23,6 +23,9 @@
   let newLoginUsername = ''
   let newLoginPassword = ''
   let newLoginNotes = ''
+  let detachVaultLocked = null
+  let activityListener = null
+  let lastActivityPingAt = 0
 
   onMount(async () => {
     try {
@@ -37,10 +40,47 @@
     } catch {
       // Best-effort: recents are not security-critical.
     }
+
+    detachVaultLocked = window.npw.onVaultLocked(({ reason }) => {
+      status = null
+      items = []
+      selectedItem = null
+      loginDetail = null
+      noteDetail = null
+      totp = null
+      clearTotpInterval()
+      masterPassword = ''
+      lastResult = `Vault locked (${reason})`
+    })
+
+    activityListener = () => {
+      if (!status) {
+        return
+      }
+      const now = Date.now()
+      if (now - lastActivityPingAt < 10_000) {
+        return
+      }
+      lastActivityPingAt = now
+      window.npw.appActivity().catch(() => {})
+    }
+    window.addEventListener('mousemove', activityListener)
+    window.addEventListener('mousedown', activityListener)
+    window.addEventListener('keydown', activityListener)
+    window.addEventListener('touchstart', activityListener)
   })
 
   onDestroy(() => {
     clearTotpInterval()
+    if (typeof detachVaultLocked === 'function') {
+      detachVaultLocked()
+    }
+    if (activityListener) {
+      window.removeEventListener('mousemove', activityListener)
+      window.removeEventListener('mousedown', activityListener)
+      window.removeEventListener('keydown', activityListener)
+      window.removeEventListener('touchstart', activityListener)
+    }
   })
 
   const createVault = async () => {

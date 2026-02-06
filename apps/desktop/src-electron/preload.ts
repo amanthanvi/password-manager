@@ -67,6 +67,16 @@ type AddLoginInput = {
 
 contextBridge.exposeInMainWorld('npw', {
   coreBanner: (): Promise<string> => ipcRenderer.invoke('core.banner'),
+  appActivity: (): Promise<boolean> => ipcRenderer.invoke('app.activity'),
+  onVaultLocked: (callback: (payload: { reason: string }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { reason: string }) => {
+      callback(payload)
+    }
+    ipcRenderer.on('vault.locked', listener)
+    return () => {
+      ipcRenderer.removeListener('vault.locked', listener)
+    }
+  },
   vaultRecentsList: (): Promise<RecentVault[]> => ipcRenderer.invoke('vault.recents.list'),
   vaultRecentsRemove: (payload: { path: string }): Promise<boolean> => ipcRenderer.invoke('vault.recents.remove', payload),
   vaultDialogOpen: (): Promise<string | null> => ipcRenderer.invoke('vault.dialog.open'),
