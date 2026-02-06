@@ -3,9 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
-    CreateVaultInput, KdfParams, NoteItem, VaultItem, VaultPayload, assess_master_password,
-    create_vault_file, generate_totp, parse_vault_header, reencrypt_vault_file_with_kek,
-    unlock_vault_file, unlock_vault_file_with_kek,
+    CreateVaultInput, KdfParams, LoginItem, NoteItem, UrlEntry, UrlMatchType, VaultItem,
+    VaultPayload, assess_master_password, create_vault_file, generate_totp, parse_vault_header,
+    reencrypt_vault_file_with_kek, unlock_vault_file, unlock_vault_file_with_kek,
 };
 use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault, write_vault_with_lock};
 use uuid::Uuid;
@@ -127,6 +127,15 @@ pub struct TotpCode {
     pub code: String,
     pub period: u16,
     pub remaining: u16,
+}
+
+#[napi(object)]
+pub struct AddLoginInput {
+    pub title: String,
+    pub url: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub notes: Option<String>,
 }
 
 #[napi]
@@ -271,6 +280,64 @@ impl VaultSession {
 
         self.payload
             .add_item(VaultItem::Note(note), now)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(id)
+    }
+
+    #[napi]
+    pub fn add_login(&mut self, input: AddLoginInput) -> Result<String> {
+        let now = unix_seconds_now();
+        let id = Uuid::new_v4().to_string();
+        let urls = input
+            .url
+            .and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                }
+            })
+            .into_iter()
+            .map(|url| UrlEntry {
+                url,
+                match_type: UrlMatchType::Exact,
+            })
+            .collect();
+        let username = input.username.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        });
+
+        let password = input
+            .password
+            .and_then(|value| if value.is_empty() { None } else { Some(value) });
+        let notes = input
+            .notes
+            .and_then(|value| if value.is_empty() { None } else { Some(value) });
+
+        let login = LoginItem {
+            id: id.clone(),
+            title: input.title,
+            urls,
+            username,
+            password,
+            totp: None,
+            notes,
+            tags: Vec::new(),
+            favorite: false,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.payload
+            .add_item(VaultItem::Login(login), now)
             .map_err(|error| error_to_napi(error.to_string()))?;
         self.persist()
             .map_err(|error| error_to_napi(error.to_string()))?;

@@ -69,6 +69,14 @@ type TotpCode = {
   remaining: number
 }
 
+type AddLoginInput = {
+  title: string
+  url?: string | null
+  username?: string | null
+  password?: string | null
+  notes?: string | null
+}
+
 type VaultSession = {
   status: () => VaultStatus
   listItems: (query?: string | null) => ItemSummary[]
@@ -78,6 +86,7 @@ type VaultSession = {
   getLoginTotp: (id: string) => TotpCode
   getNote: (id: string) => NoteDetail
   addNote: (title: string, body: string) => string
+  addLogin: (input: AddLoginInput) => string
 }
 
 type AddonApi = {
@@ -235,6 +244,39 @@ function registerIpcHandlers(api: AddonApi) {
       throw new Error('body is too long')
     }
     return session.addNote(safeTitle, payload.body)
+  })
+
+  ipcMain.handle('item.login.add', (_event, payload: AddLoginInput) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeTitle = validateText(payload.title, 'title', 256)
+    const safeUrl = payload.url ? validateOptionalText(payload.url, 'url', 2048) : undefined
+    const safeUsername = payload.username ? validateOptionalText(payload.username, 'username', 256) : undefined
+
+    const password = payload.password
+    if (password != null && typeof password !== 'string') {
+      throw new Error('password must be a string')
+    }
+    if (typeof password === 'string' && password.length > 10_000) {
+      throw new Error('password is too long')
+    }
+
+    const notes = payload.notes
+    if (notes != null && typeof notes !== 'string') {
+      throw new Error('notes must be a string')
+    }
+    if (typeof notes === 'string' && notes.length > 100_000) {
+      throw new Error('notes is too long')
+    }
+
+    return session.addLogin({
+      title: safeTitle,
+      url: safeUrl && safeUrl.length > 0 ? safeUrl : undefined,
+      username: safeUsername && safeUsername.length > 0 ? safeUsername : undefined,
+      password: typeof password === 'string' && password.length > 0 ? password : undefined,
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
+    })
   })
 
   ipcMain.handle('item.login.copy-username', (_event, payload: { id: string }) => {

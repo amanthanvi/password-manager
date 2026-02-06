@@ -18,6 +18,11 @@
   let recents = []
   let newNoteTitle = ''
   let newNoteBody = ''
+  let newLoginTitle = ''
+  let newLoginUrl = ''
+  let newLoginUsername = ''
+  let newLoginPassword = ''
+  let newLoginNotes = ''
 
   onMount(async () => {
     try {
@@ -158,6 +163,31 @@
         await selectItem(created)
       }
       lastResult = `Created note ${id}`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
+  const addLogin = async () => {
+    try {
+      const id = await window.npw.loginAdd({
+        title: newLoginTitle,
+        url: newLoginUrl.length > 0 ? newLoginUrl : null,
+        username: newLoginUsername.length > 0 ? newLoginUsername : null,
+        password: newLoginPassword,
+        notes: newLoginNotes
+      })
+      newLoginTitle = ''
+      newLoginUrl = ''
+      newLoginUsername = ''
+      newLoginPassword = ''
+      newLoginNotes = ''
+      await refreshItems()
+      const created = items.find((item) => item.id === id)
+      if (created) {
+        await selectItem(created)
+      }
+      lastResult = `Created login ${id}`
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -321,6 +351,35 @@
     Search
     <input bind:value={query} on:input={refreshItems} disabled={!status} />
   </label>
+
+  {#if status}
+    <section class="add-login">
+      <h2>Add Login</h2>
+      <label>
+        Title
+        <input bind:value={newLoginTitle} />
+      </label>
+      <label>
+        URL
+        <input bind:value={newLoginUrl} />
+      </label>
+      <label>
+        Username
+        <input bind:value={newLoginUsername} />
+      </label>
+      <label>
+        Password
+        <input bind:value={newLoginPassword} type="password" />
+      </label>
+      <label>
+        Notes
+        <textarea bind:value={newLoginNotes} rows="4"></textarea>
+      </label>
+      <div class="actions">
+        <button on:click={addLogin} disabled={newLoginTitle.trim().length === 0}>Save Login</button>
+      </div>
+    </section>
+  {/if}
 
   {#if status}
     <section class="add-note">
@@ -505,7 +564,8 @@
     margin: 0;
   }
 
-  .add-note {
+  .add-note,
+  .add-login {
     display: grid;
     gap: 0.75rem;
     padding: 0.75rem;
@@ -514,7 +574,8 @@
     background: #f4fbff;
   }
 
-  .add-note h2 {
+  .add-note h2,
+  .add-login h2 {
     margin: 0;
   }
 

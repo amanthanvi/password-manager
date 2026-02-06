@@ -57,6 +57,14 @@ type TotpCode = {
   remaining: number
 }
 
+type AddLoginInput = {
+  title: string
+  url?: string | null
+  username?: string | null
+  password?: string | null
+  notes?: string | null
+}
+
 contextBridge.exposeInMainWorld('npw', {
   coreBanner: (): Promise<string> => ipcRenderer.invoke('core.banner'),
   vaultRecentsList: (): Promise<RecentVault[]> => ipcRenderer.invoke('vault.recents.list'),
@@ -75,6 +83,7 @@ contextBridge.exposeInMainWorld('npw', {
   loginGet: (payload: { id: string }): Promise<LoginDetail> => ipcRenderer.invoke('item.login.get', payload),
   noteGet: (payload: { id: string }): Promise<NoteDetail> => ipcRenderer.invoke('item.note.get', payload),
   noteAdd: (payload: { title: string; body: string }): Promise<string> => ipcRenderer.invoke('item.note.add', payload),
+  loginAdd: (payload: AddLoginInput): Promise<string> => ipcRenderer.invoke('item.login.add', payload),
   loginCopyUsername: (payload: { id: string }): Promise<boolean> =>
     ipcRenderer.invoke('item.login.copy-username', payload),
   loginCopyPassword: (payload: { id: string }): Promise<boolean> =>
