@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build:addon": "node ../../scripts/build-addon.mjs",
+    "build:addon:release": "node ../../scripts/build-addon.mjs --release",
     "build": "pnpm run build:addon && vite build && tsc -p tsconfig.electron.json",
-    "dist": "pnpm run build && electron-builder --publish never",
-    "dist:dir": "pnpm run build && electron-builder --dir --publish never",
+    "build:release": "pnpm run build:addon:release && vite build && tsc -p tsconfig.electron.json",
+    "dist": "pnpm run build:release && electron-builder --publish never",
+    "dist:dir": "pnpm run build:release && electron-builder --dir --publish never",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json && tsc -p tsconfig.electron.json --noEmit",

@@ -7,8 +7,14 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 const cargoBinary = resolveCargoBinary()
+const isRelease = process.argv.includes('--release')
 
-const build = spawnSync(cargoBinary, ['build', '-p', 'npw-addon'], {
+const cargoArgs = ['build', '-p', 'npw-addon']
+if (isRelease) {
+  cargoArgs.push('--release')
+}
+
+const build = spawnSync(cargoBinary, cargoArgs, {
   cwd: rootDir,
   stdio: 'inherit',
   shell: process.platform === 'win32'
@@ -17,7 +23,7 @@ if (build.status !== 0) {
   process.exit(build.status ?? 1)
 }
 
-const sourceLibrary = resolveAddonLibraryPath(rootDir)
+const sourceLibrary = resolveAddonLibraryPath(rootDir, isRelease)
 const destinationDir = path.resolve(rootDir, 'apps/desktop/native')
 const destinationNode = path.join(destinationDir, 'npw-addon.node')
 fs.mkdirSync(destinationDir, { recursive: true })
@@ -39,8 +45,8 @@ function resolveCargoBinary() {
   return process.platform === 'win32' ? 'cargo.exe' : 'cargo'
 }
 
-function resolveAddonLibraryPath(root) {
-  const targetDir = path.join(root, 'target', 'debug')
+function resolveAddonLibraryPath(root, release) {
+  const targetDir = path.join(root, 'target', release ? 'release' : 'debug')
   switch (process.platform) {
     case 'win32':
       return path.join(targetDir, 'npw_addon.dll')
