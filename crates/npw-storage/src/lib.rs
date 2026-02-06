@@ -1,13 +1,160 @@
-use std::fs::{self, OpenOptions};
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub fn read_vault(path: &Path) -> std::io::Result<Vec<u8>> {
-    fs::read(path)
+use fs2::FileExt;
+use thiserror::Error;
+
+const DAY_SECONDS: u64 = 24 * 60 * 60;
+const WEEK_SECONDS: u64 = 7 * DAY_SECONDS;
+
+#[derive(Debug, Error)]
+pub enum StorageError {
+    #[error("vault file locked by another process")]
+    Locked,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
-pub fn write_vault_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn read_vault(path: &Path) -> Result<Vec<u8>, StorageError> {
+    Ok(fs::read(path)?)
+}
+
+pub fn write_vault(path: &Path, bytes: &[u8], max_retained: usize) -> Result<(), StorageError> {
+    let _lock = acquire_lock(path)?;
+
+    if path.exists() {
+        create_backup(path, max_retained)?;
+    }
+
+    write_vault_atomic(path, bytes)?;
+    Ok(())
+}
+
+fn acquire_lock(path: &Path) -> Result<File, StorageError> {
+    let lock_path = lock_file_path(path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let lock_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)?;
+    match lock_file.try_lock_exclusive() {
+        Ok(()) => Ok(lock_file),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(StorageError::Locked),
+        Err(error) => Err(StorageError::Io(error)),
+    }
+}
+
+fn lock_file_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vault");
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".{file_name}.lock"))
+}
+
+fn create_backup(path: &Path, max_retained: usize) -> Result<(), StorageError> {
+    let backup_dir = backup_directory(path);
+    fs::create_dir_all(&backup_dir)?;
+    let timestamp = unix_seconds_now();
+    let backup_path = backup_dir.join(format!("backup-{timestamp}.npw"));
+    fs::copy(path, &backup_path)?;
+    set_secure_permissions(&backup_path)?;
+    compact_backups(&backup_dir, max_retained, timestamp)?;
+    Ok(())
+}
+
+fn backup_directory(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vault.npw");
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("{file_name}.backups"))
+}
+
+fn compact_backups(
+    backup_dir: &Path,
+    max_weekly_retained: usize,
+    now_seconds: u64,
+) -> Result<(), StorageError> {
+    let mut backups = Vec::new();
+    for entry in fs::read_dir(backup_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(timestamp) = parse_backup_timestamp(&path) {
+            backups.push((path, timestamp));
+        }
+    }
+
+    backups.sort_by(|left, right| right.1.cmp(&left.1));
+
+    let mut keep = HashSet::new();
+    let mut day_buckets: HashMap<u64, PathBuf> = HashMap::new();
+    let mut week_buckets: HashMap<u64, PathBuf> = HashMap::new();
+
+    for (path, timestamp) in &backups {
+        let age = now_seconds.saturating_sub(*timestamp);
+        if age <= DAY_SECONDS {
+            keep.insert(path.clone());
+            continue;
+        }
+        if age <= 8 * DAY_SECONDS {
+            let day_bucket = age / DAY_SECONDS;
+            day_buckets
+                .entry(day_bucket)
+                .or_insert_with(|| path.clone());
+            continue;
+        }
+        let week_bucket = age / WEEK_SECONDS;
+        week_buckets
+            .entry(week_bucket)
+            .or_insert_with(|| path.clone());
+    }
+
+    keep.extend(day_buckets.into_values());
+
+    let mut weekly: Vec<PathBuf> = week_buckets.into_values().collect();
+    weekly.sort_by_key(|path| {
+        parse_backup_timestamp(path)
+            .map(std::cmp::Reverse)
+            .unwrap_or(std::cmp::Reverse(0))
+    });
+    for path in weekly.into_iter().take(max_weekly_retained) {
+        keep.insert(path);
+    }
+
+    for (path, _) in backups {
+        if !keep.contains(&path) {
+            fs::remove_file(path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_backup_timestamp(path: &Path) -> Option<u64> {
+    let file_name = path.file_name()?.to_str()?;
+    if !file_name.starts_with("backup-") || !file_name.ends_with(".npw") {
+        return None;
+    }
+    let raw = file_name.strip_prefix("backup-")?.strip_suffix(".npw")?;
+    raw.parse::<u64>().ok()
+}
+
+fn write_vault_atomic(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
     let parent_dir = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent_dir)?;
 
@@ -46,7 +193,7 @@ fn unique_suffix() -> u128 {
     (u128::from(std::process::id()) << 64) | nanos
 }
 
-fn set_secure_permissions(path: &Path) -> std::io::Result<()> {
+fn set_secure_permissions(path: &Path) -> Result<(), StorageError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -57,12 +204,22 @@ fn set_secure_permissions(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn unix_seconds_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::{read_vault, write_vault_atomic};
+    use super::{
+        StorageError, backup_directory, compact_backups, lock_file_path, parse_backup_timestamp,
+        read_vault, write_vault,
+    };
 
     fn temp_path(file_name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -75,9 +232,74 @@ mod tests {
     fn writes_and_reads_vault_file() {
         let path = temp_path("vault.npw");
         let payload = b"encrypted-vault";
-        write_vault_atomic(&path, payload).expect("write should succeed");
+        write_vault(&path, payload, 10).expect("write should succeed");
         let loaded = read_vault(&path).expect("read should succeed");
         fs::remove_file(path).expect("cleanup should succeed");
         assert_eq!(loaded, payload);
+    }
+
+    #[test]
+    fn returns_locked_when_lock_is_held() {
+        let path = temp_path("locked.npw");
+        let lock_path = lock_file_path(&path);
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent).expect("create lock parent");
+        }
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .expect("open lock file");
+        fs2::FileExt::try_lock_exclusive(&lock_file).expect("lock must succeed");
+
+        let result = write_vault(&path, b"payload", 10);
+        fs2::FileExt::unlock(&lock_file).expect("unlock lock file");
+
+        assert!(matches!(result, Err(StorageError::Locked)));
+        let _ = fs::remove_file(lock_path);
+    }
+
+    #[test]
+    fn compaction_keeps_expected_backup_windows() {
+        let vault_path = temp_path("backup-source.npw");
+        fs::write(&vault_path, b"seed").expect("seed write");
+        let backup_dir = backup_directory(&vault_path);
+        fs::create_dir_all(&backup_dir).expect("create backup dir");
+        let now = 10_000_000_u64;
+        let backup_times = [
+            now - 100,
+            now - 1_000,
+            now - (2 * 24 * 60 * 60),
+            now - (2 * 24 * 60 * 60) - 300,
+            now - (10 * 24 * 60 * 60),
+            now - (11 * 24 * 60 * 60),
+            now - (18 * 24 * 60 * 60),
+            now - (40 * 24 * 60 * 60),
+        ];
+        for timestamp in backup_times {
+            let path = backup_dir.join(format!("backup-{timestamp}.npw"));
+            fs::write(path, b"b").expect("write backup file");
+        }
+
+        compact_backups(&backup_dir, 2, now).expect("compaction should succeed");
+
+        let mut remaining = Vec::new();
+        for entry in fs::read_dir(&backup_dir).expect("read backup dir") {
+            let entry = entry.expect("read backup entry");
+            if let Some(timestamp) = parse_backup_timestamp(&entry.path()) {
+                remaining.push(timestamp);
+            }
+        }
+        remaining.sort_unstable();
+
+        assert!(remaining.contains(&(now - 100)));
+        assert!(remaining.contains(&(now - 1_000)));
+        assert!(remaining.contains(&(now - (2 * 24 * 60 * 60))));
+        assert!(!remaining.contains(&(now - (2 * 24 * 60 * 60) - 300)));
+
+        let _ = fs::remove_dir_all(backup_dir);
+        let _ = fs::remove_file(vault_path);
     }
 }

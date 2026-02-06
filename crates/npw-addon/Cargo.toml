@@ -9,9 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-ciborium.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
 npw-core = { path = "../npw-core" }
 npw-storage = { path = "../npw-storage" }
-serde_json.workspace = true

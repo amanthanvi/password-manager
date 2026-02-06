@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -8,12 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use directories::ProjectDirs;
 use npw_core::{
-    CreateVaultInput, KdfParams, VaultError, create_vault_file, parse_vault_header,
-    unlock_vault_file,
+    CreateVaultInput, ItemTypeFilter, KdfParams, LoginItem, ModelError, NoteItem, PasskeyRefItem,
+    ReencryptVaultInput, UrlEntry, UrlMatchType, VaultError, VaultItem, VaultPayload,
+    create_vault_file, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
 };
-use npw_storage::{read_vault, write_vault_atomic};
+use npw_storage::{StorageError, read_vault, write_vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 const JSON_SCHEMA_VERSION: u8 = 1;
 
@@ -81,6 +83,11 @@ enum Command {
         #[command(subcommand)]
         command: VaultCommand,
     },
+    Item {
+        #[command(subcommand)]
+        command: ItemCommand,
+    },
+    Search(SearchArgs),
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
@@ -97,6 +104,16 @@ enum VaultCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ItemCommand {
+    AddLogin(ItemAddLoginArgs),
+    AddNote(ItemAddNoteArgs),
+    AddPasskey(ItemAddPasskeyArgs),
+    Get(ItemIdArgs),
+    List(ItemListArgs),
+    Delete(ItemIdArgs),
+}
+
+#[derive(Debug, Subcommand)]
 enum ConfigCommand {
     Get { key: String },
     Set { key: String, value: String },
@@ -106,6 +123,12 @@ enum ConfigCommand {
 #[derive(Debug, Args)]
 struct VaultPathArgs {
     path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct SearchArgs {
+    path: Option<PathBuf>,
+    query: String,
 }
 
 #[derive(Debug, Args)]
@@ -119,6 +142,89 @@ struct VaultInitArgs {
     argon_t: u32,
     #[arg(long, default_value_t = 4)]
     argon_p: u32,
+}
+
+#[derive(Debug, Args)]
+struct ItemIdArgs {
+    path: Option<PathBuf>,
+    id: String,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ItemTypeArg {
+    Login,
+    Note,
+    PasskeyRef,
+}
+
+impl ItemTypeArg {
+    fn to_filter(self) -> ItemTypeFilter {
+        match self {
+            Self::Login => ItemTypeFilter::Login,
+            Self::Note => ItemTypeFilter::Note,
+            Self::PasskeyRef => ItemTypeFilter::PasskeyRef,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct ItemListArgs {
+    path: Option<PathBuf>,
+    #[arg(long, value_enum)]
+    item_type: Option<ItemTypeArg>,
+}
+
+#[derive(Debug, Args)]
+struct ItemAddLoginArgs {
+    path: Option<PathBuf>,
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    username: Option<String>,
+    #[arg(long)]
+    password: Option<String>,
+    #[arg(long = "url")]
+    urls: Vec<String>,
+    #[arg(long)]
+    notes: Option<String>,
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+    #[arg(long, default_value_t = false)]
+    favorite: bool,
+}
+
+#[derive(Debug, Args)]
+struct ItemAddNoteArgs {
+    path: Option<PathBuf>,
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    body: String,
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+    #[arg(long, default_value_t = false)]
+    favorite: bool,
+}
+
+#[derive(Debug, Args)]
+struct ItemAddPasskeyArgs {
+    path: Option<PathBuf>,
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    rp_id: String,
+    #[arg(long)]
+    rp_name: Option<String>,
+    #[arg(long)]
+    user_display_name: Option<String>,
+    #[arg(long)]
+    credential_id: String,
+    #[arg(long)]
+    notes: Option<String>,
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+    #[arg(long, default_value_t = false)]
+    favorite: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
@@ -307,6 +413,8 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
             VaultCommand::Unlock(args) => handle_vault_unlock(cli, &config, args),
             VaultCommand::Status(args) => handle_vault_status(cli, &config, args),
         },
+        Command::Item { command } => handle_item_command(cli, &config, command),
+        Command::Search(args) => handle_search(cli, &config, args),
         Command::Config { command } => handle_config(command, &mut config, &config_path),
         Command::Generate(args) => handle_generate(args),
     }
@@ -325,11 +433,8 @@ fn handle_vault_init(
     let password = read_master_password(cli.non_interactive, true)?;
     validate_master_password(&password)?;
 
-    let payload = empty_payload_cbor().map_err(|error| CliError {
-        code: CliExitCode::General,
-        kind: "payload_encode_failed",
-        message: format!("failed to build payload: {error}"),
-    })?;
+    let payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now());
+    let payload_cbor = payload.to_cbor().map_err(map_model_error)?;
 
     let kdf_params = KdfParams {
         memory_kib: args.argon_m_kib,
@@ -338,14 +443,14 @@ fn handle_vault_init(
     };
     let vault_bytes = create_vault_file(&CreateVaultInput {
         master_password: &password,
-        payload_plaintext: &payload,
+        payload_plaintext: &payload_cbor,
         item_count: 0,
         vault_label: args.label.as_deref(),
         kdf_params,
     })
     .map_err(map_vault_error)?;
 
-    write_vault_atomic(&path, &vault_bytes).map_err(map_io_error)?;
+    write_vault(&path, &vault_bytes, config.backup.max_retained).map_err(map_storage_error)?;
 
     Ok(CommandOutput {
         message: format!("Created vault at {}", path.display()),
@@ -368,7 +473,7 @@ fn handle_vault_check(
     args: &VaultPathArgs,
 ) -> Result<CommandOutput, CliError> {
     let path = resolve_vault_path(cli, config, args.path.clone())?;
-    let vault_bytes = read_vault(&path).map_err(map_io_error)?;
+    let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let password = read_master_password(cli.non_interactive, false)?;
     let unlocked = unlock_vault_file(&vault_bytes, &password).map_err(map_vault_error)?;
 
@@ -393,7 +498,7 @@ fn handle_vault_unlock(
     args: &VaultPathArgs,
 ) -> Result<CommandOutput, CliError> {
     let path = resolve_vault_path(cli, config, args.path.clone())?;
-    let vault_bytes = read_vault(&path).map_err(map_io_error)?;
+    let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let password = read_master_password(cli.non_interactive, false)?;
     unlock_vault_file(&vault_bytes, &password).map_err(map_vault_error)?;
 
@@ -412,7 +517,7 @@ fn handle_vault_status(
     args: &VaultPathArgs,
 ) -> Result<CommandOutput, CliError> {
     let path = resolve_vault_path(cli, config, args.path.clone())?;
-    let vault_bytes = read_vault(&path).map_err(map_io_error)?;
+    let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let header = parse_vault_header(&vault_bytes).map_err(map_vault_error)?;
 
     Ok(CommandOutput {
@@ -433,6 +538,297 @@ fn handle_vault_status(
             }
         }),
     })
+}
+
+fn handle_item_command(
+    cli: &Cli,
+    config: &AppConfig,
+    command: &ItemCommand,
+) -> Result<CommandOutput, CliError> {
+    match command {
+        ItemCommand::AddLogin(args) => handle_item_add_login(cli, config, args),
+        ItemCommand::AddNote(args) => handle_item_add_note(cli, config, args),
+        ItemCommand::AddPasskey(args) => handle_item_add_passkey(cli, config, args),
+        ItemCommand::Get(args) => handle_item_get(cli, config, args),
+        ItemCommand::List(args) => handle_item_list(cli, config, args),
+        ItemCommand::Delete(args) => handle_item_delete(cli, config, args),
+    }
+}
+
+fn handle_item_add_login(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemAddLoginArgs,
+) -> Result<CommandOutput, CliError> {
+    let now = unix_seconds_now();
+    let (path, password, unlocked, mut payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let urls = args
+        .urls
+        .iter()
+        .map(|url| UrlEntry {
+            url: url.clone(),
+            match_type: UrlMatchType::Exact,
+        })
+        .collect();
+
+    let item = VaultItem::Login(LoginItem {
+        id: Uuid::new_v4().to_string(),
+        title: args.title.clone(),
+        urls,
+        username: args.username.clone(),
+        password: args.password.clone(),
+        totp: None,
+        notes: args.notes.clone(),
+        tags: normalize_tags(&args.tags),
+        favorite: args.favorite,
+        created_at: now,
+        updated_at: now,
+    });
+    let item_id = item.id().to_owned();
+    payload.add_item(item, now).map_err(map_model_error)?;
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!("Created login item {item_id}"),
+        payload: json!({
+            "id": item_id,
+            "path": path,
+            "type": "login"
+        }),
+    })
+}
+
+fn handle_item_add_note(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemAddNoteArgs,
+) -> Result<CommandOutput, CliError> {
+    let now = unix_seconds_now();
+    let (path, password, unlocked, mut payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let item = VaultItem::Note(NoteItem {
+        id: Uuid::new_v4().to_string(),
+        title: args.title.clone(),
+        body: args.body.clone(),
+        tags: normalize_tags(&args.tags),
+        favorite: args.favorite,
+        created_at: now,
+        updated_at: now,
+    });
+    let item_id = item.id().to_owned();
+    payload.add_item(item, now).map_err(map_model_error)?;
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!("Created note item {item_id}"),
+        payload: json!({
+            "id": item_id,
+            "path": path,
+            "type": "note"
+        }),
+    })
+}
+
+fn handle_item_add_passkey(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemAddPasskeyArgs,
+) -> Result<CommandOutput, CliError> {
+    let now = unix_seconds_now();
+    let (path, password, unlocked, mut payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let item = VaultItem::PasskeyRef(PasskeyRefItem {
+        id: Uuid::new_v4().to_string(),
+        title: args.title.clone(),
+        rp_id: args.rp_id.clone(),
+        rp_name: args.rp_name.clone(),
+        user_display_name: args.user_display_name.clone(),
+        credential_id: args.credential_id.as_bytes().to_vec(),
+        notes: args.notes.clone(),
+        tags: normalize_tags(&args.tags),
+        favorite: args.favorite,
+        created_at: now,
+        updated_at: now,
+    });
+    let item_id = item.id().to_owned();
+    payload.add_item(item, now).map_err(map_model_error)?;
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!("Created passkey_ref item {item_id}"),
+        payload: json!({
+            "id": item_id,
+            "path": path,
+            "type": "passkey_ref"
+        }),
+    })
+}
+
+fn handle_item_get(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemIdArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let item = payload.get_item(&args.id).ok_or_else(|| CliError {
+        code: CliExitCode::Usage,
+        kind: "item_not_found",
+        message: format!("item not found: {}", args.id),
+    })?;
+    let value = serde_json::to_value(item).map_err(|_| CliError {
+        code: CliExitCode::General,
+        kind: "item_serialize_failed",
+        message: "failed to serialize item".to_owned(),
+    })?;
+
+    Ok(CommandOutput {
+        message: serde_json::to_string_pretty(&value)
+            .unwrap_or_else(|_| "failed to serialize item".to_owned()),
+        payload: json!({
+            "item": value
+        }),
+    })
+}
+
+fn handle_item_list(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemListArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let filter = args.item_type.map(ItemTypeArg::to_filter);
+    let items = payload.list_items(filter);
+    let items_json = items_to_json(&items)?;
+
+    Ok(CommandOutput {
+        message: serde_json::to_string_pretty(&items_json)
+            .unwrap_or_else(|_| "failed to serialize item list".to_owned()),
+        payload: json!({
+            "count": items.len(),
+            "items": items_json
+        }),
+    })
+}
+
+fn handle_item_delete(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ItemIdArgs,
+) -> Result<CommandOutput, CliError> {
+    let now = unix_seconds_now();
+    let (path, password, unlocked, mut payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let deleted = payload.soft_delete_item(&args.id, now);
+    if !deleted {
+        return Err(CliError {
+            code: CliExitCode::Usage,
+            kind: "item_not_found",
+            message: format!("item not found: {}", args.id),
+        });
+    }
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!("Deleted item {}", args.id),
+        payload: json!({
+            "id": args.id,
+            "deleted": true
+        }),
+    })
+}
+
+fn handle_search(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &SearchArgs,
+) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let items = payload.search_items(&args.query);
+    let items_json = items_to_json(&items)?;
+
+    Ok(CommandOutput {
+        message: serde_json::to_string_pretty(&items_json)
+            .unwrap_or_else(|_| "failed to serialize search results".to_owned()),
+        payload: json!({
+            "query": args.query,
+            "count": items.len(),
+            "items": items_json
+        }),
+    })
+}
+
+fn load_vault_payload(
+    cli: &Cli,
+    config: &AppConfig,
+    command_path: Option<PathBuf>,
+) -> Result<(PathBuf, String, npw_core::UnlockedVault, VaultPayload), CliError> {
+    let path = resolve_vault_path(cli, config, command_path)?;
+    let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
+    let password = read_master_password(cli.non_interactive, false)?;
+    let unlocked = unlock_vault_file(&vault_bytes, &password).map_err(map_vault_error)?;
+    let payload = VaultPayload::from_cbor(&unlocked.payload_plaintext).map_err(map_model_error)?;
+    Ok((path, password, unlocked, payload))
+}
+
+fn persist_vault_payload(
+    path: &Path,
+    password: &str,
+    unlocked: &npw_core::UnlockedVault,
+    mut payload: VaultPayload,
+    max_retained: usize,
+) -> Result<(), CliError> {
+    payload.rebuild_search_index();
+    let payload_bytes = payload.to_cbor().map_err(map_model_error)?;
+    let file = reencrypt_vault_file(&ReencryptVaultInput {
+        master_password: password,
+        payload_plaintext: &payload_bytes,
+        item_count: payload.item_count(),
+        header: &unlocked.header,
+        envelope: &unlocked.envelope,
+    })
+    .map_err(map_vault_error)?;
+    write_vault(path, &file, max_retained).map_err(map_storage_error)
+}
+
+fn items_to_json(items: &[&VaultItem]) -> Result<Vec<Value>, CliError> {
+    items
+        .iter()
+        .map(|item| {
+            serde_json::to_value(item).map_err(|_| CliError {
+                code: CliExitCode::General,
+                kind: "item_serialize_failed",
+                message: "failed to serialize item".to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn handle_config(
@@ -613,42 +1009,6 @@ fn read_master_password(non_interactive: bool, confirm: bool) -> Result<String, 
     Ok(password)
 }
 
-#[derive(Debug, Serialize)]
-struct InitialPayload {
-    schema: u8,
-    app: AppMetadata,
-    updated_at: u64,
-    items: Vec<Value>,
-    tombstones: Vec<Value>,
-    settings: BTreeMap<String, Value>,
-    search_index: Vec<Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct AppMetadata {
-    name: String,
-    version: String,
-}
-
-fn empty_payload_cbor() -> Result<Vec<u8>, String> {
-    let payload = InitialPayload {
-        schema: 1,
-        app: AppMetadata {
-            name: "npw".to_owned(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-        },
-        updated_at: unix_seconds_now(),
-        items: Vec::new(),
-        tombstones: Vec::new(),
-        settings: BTreeMap::new(),
-        search_index: Vec::new(),
-    };
-
-    let mut output = Vec::new();
-    ciborium::ser::into_writer(&payload, &mut output).map_err(|error| error.to_string())?;
-    Ok(output)
-}
-
 fn map_io_error(error: std::io::Error) -> CliError {
     let code = if error.kind() == std::io::ErrorKind::PermissionDenied {
         CliExitCode::PermissionDenied
@@ -659,6 +1019,37 @@ fn map_io_error(error: std::io::Error) -> CliError {
         code,
         kind: "io_error",
         message: error.to_string(),
+    }
+}
+
+fn map_storage_error(error: StorageError) -> CliError {
+    match error {
+        StorageError::Locked => CliError {
+            code: CliExitCode::VaultFileLocked,
+            kind: "vault_file_locked",
+            message: "vault file is locked by another process".to_owned(),
+        },
+        StorageError::Io(error) => map_io_error(error),
+    }
+}
+
+fn map_model_error(error: ModelError) -> CliError {
+    match error {
+        ModelError::DecodeFailure | ModelError::UnsupportedSchema(_) => CliError {
+            code: CliExitCode::CorruptOrParse,
+            kind: "payload_parse_error",
+            message: error.to_string(),
+        },
+        ModelError::InvalidField { .. } | ModelError::DuplicateItemId(_) => CliError {
+            code: CliExitCode::Usage,
+            kind: "payload_validation_error",
+            message: error.to_string(),
+        },
+        ModelError::EncodeFailure => CliError {
+            code: CliExitCode::General,
+            kind: "payload_encode_error",
+            message: error.to_string(),
+        },
     }
 }
 
@@ -808,6 +1199,22 @@ fn parse_bool(key: &str, value: &str) -> Result<bool, CliError> {
     value
         .parse::<bool>()
         .map_err(|_| CliError::usage(format!("invalid bool value for {key}")))
+}
+
+fn normalize_tags(raw_tags: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut tags = Vec::new();
+    for raw_tag in raw_tags {
+        let trimmed = raw_tag.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let normalized = trimmed.to_owned();
+        if seen.insert(normalized.to_lowercase()) {
+            tags.push(normalized);
+        }
+    }
+    tags
 }
 
 fn unix_seconds_now() -> u64 {

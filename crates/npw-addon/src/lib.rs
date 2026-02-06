@@ -3,9 +3,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
-    CreateVaultInput, KdfParams, create_vault_file, parse_vault_header, unlock_vault_file,
+    CreateVaultInput, KdfParams, VaultPayload, create_vault_file, parse_vault_header,
+    unlock_vault_file,
 };
-use npw_storage::{read_vault, write_vault_atomic};
+use npw_storage::{read_vault, write_vault};
 
 #[napi(object)]
 pub struct VaultStatus {
@@ -29,7 +30,9 @@ pub fn vault_create(
     vault_label: Option<String>,
 ) -> Result<()> {
     let path_ref = std::path::Path::new(&path);
-    let payload = empty_payload_cbor()?;
+    let payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now())
+        .to_cbor()
+        .map_err(|error| error_to_napi(error.to_string()))?;
     let vault = create_vault_file(&CreateVaultInput {
         master_password: &master_password,
         payload_plaintext: &payload,
@@ -38,7 +41,7 @@ pub fn vault_create(
         kdf_params: KdfParams::default(),
     })
     .map_err(|error| error_to_napi(error.to_string()))?;
-    write_vault_atomic(path_ref, &vault).map_err(|error| error_to_napi(error.to_string()))?;
+    write_vault(path_ref, &vault, 10).map_err(|error| error_to_napi(error.to_string()))?;
     Ok(())
 }
 
@@ -75,25 +78,6 @@ pub fn vault_check(path: String, master_password: String) -> Result<VaultStatus>
 
 fn error_to_napi(message: String) -> Error {
     Error::new(Status::GenericFailure, message)
-}
-
-fn empty_payload_cbor() -> Result<Vec<u8>> {
-    let payload = serde_json::json!({
-        "schema": 1,
-        "app": {
-            "name": "npw",
-            "version": env!("CARGO_PKG_VERSION")
-        },
-        "updated_at": unix_seconds_now(),
-        "items": [],
-        "tombstones": [],
-        "settings": {},
-        "search_index": []
-    });
-    let mut output = Vec::new();
-    ciborium::ser::into_writer(&payload, &mut output)
-        .map_err(|error| error_to_napi(error.to_string()))?;
-    Ok(output)
 }
 
 fn unix_seconds_now() -> u64 {

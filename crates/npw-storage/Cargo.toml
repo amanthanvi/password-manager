@@ -6,3 +6,5 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+fs2.workspace = true
+thiserror.workspace = true

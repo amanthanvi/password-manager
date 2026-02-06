@@ -82,6 +82,15 @@ pub struct CreateVaultInput<'a> {
     pub kdf_params: KdfParams,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReencryptVaultInput<'a> {
+    pub master_password: &'a str,
+    pub payload_plaintext: &'a [u8],
+    pub item_count: u32,
+    pub header: &'a VaultHeader,
+    pub envelope: &'a EnvelopePlaintext,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VaultHeader {
     pub kdf_params: KdfParams,
@@ -145,21 +154,60 @@ pub fn create_vault_file(input: &CreateVaultInput<'_>) -> Result<Vec<u8>, VaultE
     }
 
     let mut salt = random_bytes::<SALT_LEN>()?;
-    let env_nonce = random_bytes::<NONCE_LEN>()?;
-    let payload_nonce = random_bytes::<NONCE_LEN>()?;
-    let mut vault_key = random_bytes::<KEY_LEN>()?;
-
-    let mut kdf_key = derive_kdf_key(input.master_password, &salt, input.kdf_params)?;
-    let mut kek = derive_hkdf(&kdf_key, b"NPW:v1:KEK")?;
-    let mut payload_key = derive_hkdf(&vault_key, b"NPW:v1:PAYLOAD")?;
-
-    let envelope = EnvelopePlaintext {
+    let mut envelope = EnvelopePlaintext {
         vault_id: random_bytes::<16>()?,
-        vault_key,
+        vault_key: random_bytes::<KEY_LEN>()?,
         created_at: unix_seconds_now(),
         kdf_hint: None,
         reserved: None,
     };
+
+    let file = build_vault_file(
+        input.master_password,
+        input.payload_plaintext,
+        input.item_count,
+        label,
+        input.kdf_params,
+        &salt,
+        &envelope,
+    );
+
+    envelope.vault_key.zeroize();
+    salt.zeroize();
+    file
+}
+
+pub fn reencrypt_vault_file(input: &ReencryptVaultInput<'_>) -> Result<Vec<u8>, VaultError> {
+    input.header.kdf_params.validate()?;
+    build_vault_file(
+        input.master_password,
+        input.payload_plaintext,
+        input.item_count,
+        &input.header.vault_label,
+        input.header.kdf_params,
+        &input.header.salt,
+        input.envelope,
+    )
+}
+
+fn build_vault_file(
+    master_password: &str,
+    payload_plaintext: &[u8],
+    item_count: u32,
+    vault_label: &str,
+    kdf_params: KdfParams,
+    salt: &[u8; SALT_LEN],
+    envelope: &EnvelopePlaintext,
+) -> Result<Vec<u8>, VaultError> {
+    if vault_label.len() > MAX_LABEL_BYTES {
+        return Err(VaultError::LabelTooLong);
+    }
+
+    let env_nonce = random_bytes::<NONCE_LEN>()?;
+    let payload_nonce = random_bytes::<NONCE_LEN>()?;
+    let mut kdf_key = derive_kdf_key(master_password, salt, kdf_params)?;
+    let mut kek = derive_hkdf(&kdf_key, b"NPW:v1:KEK")?;
+    let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
     let envelope_plaintext = to_cbor(&envelope)?;
     let env_ciphertext_len = ciphertext_len_u32(&envelope_plaintext)?;
     validate_env_ciphertext_len(env_ciphertext_len)?;
@@ -167,16 +215,16 @@ pub fn create_vault_file(input: &CreateVaultInput<'_>) -> Result<Vec<u8>, VaultE
     let mut env_aad = Vec::new();
     push_header_prefix(
         &mut env_aad,
-        label,
-        input.kdf_params,
-        input.item_count,
-        &salt,
+        vault_label,
+        kdf_params,
+        item_count,
+        salt,
         &env_nonce,
     )?;
     push_u32_le(&mut env_aad, env_ciphertext_len);
 
     let env_ciphertext = encrypt(&kek, &env_nonce, &envelope_plaintext, &env_aad)?;
-    let payload_ciphertext_len = ciphertext_len_u64(input.payload_plaintext)?;
+    let payload_ciphertext_len = ciphertext_len_u64(payload_plaintext)?;
     if payload_ciphertext_len > MAX_PAYLOAD_CIPHERTEXT_LEN {
         return Err(VaultError::InvalidHeader("payload_ct_len"));
     }
@@ -190,7 +238,7 @@ pub fn create_vault_file(input: &CreateVaultInput<'_>) -> Result<Vec<u8>, VaultE
     let payload_ciphertext = encrypt(
         &payload_key,
         &payload_nonce,
-        input.payload_plaintext,
+        payload_plaintext,
         &payload_aad,
     )?;
 
@@ -200,8 +248,6 @@ pub fn create_vault_file(input: &CreateVaultInput<'_>) -> Result<Vec<u8>, VaultE
     kdf_key.zeroize();
     kek.zeroize();
     payload_key.zeroize();
-    vault_key.zeroize();
-    salt.zeroize();
 
     Ok(file_bytes)
 }
@@ -224,7 +270,7 @@ pub fn unlock_vault_file(
         parsed.env_ciphertext,
         parsed.env_aad,
     )?;
-    let mut envelope: EnvelopePlaintext = from_cbor(&envelope_plaintext)?;
+    let envelope: EnvelopePlaintext = from_cbor(&envelope_plaintext)?;
     let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
     let payload_plaintext = decrypt(
         &payload_key,
@@ -237,7 +283,6 @@ pub fn unlock_vault_file(
     kek.zeroize();
     payload_key.zeroize();
     envelope_plaintext.zeroize();
-    envelope.vault_key.zeroize();
 
     Ok(UnlockedVault {
         header: parsed.header,
