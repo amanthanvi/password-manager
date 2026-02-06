@@ -29,6 +29,12 @@
   let detachVaultLocked = null
   let activityListener = null
   let lastActivityPingAt = 0
+  let recoveryVisible = false
+  let recoveryVaultPath = ''
+  let recoveryBackups = []
+  let recoverySelectedBackupPath = ''
+  let recoveryBusy = false
+  let recoveryError = ''
 
   onMount(async () => {
     try {
@@ -56,6 +62,12 @@
       totpQrVisible = false
       clearTotpInterval()
       masterPassword = ''
+      recoveryVisible = false
+      recoveryVaultPath = ''
+      recoveryBackups = []
+      recoverySelectedBackupPath = ''
+      recoveryBusy = false
+      recoveryError = ''
       lastResult = `Vault locked (${reason})`
     })
 
@@ -114,7 +126,88 @@
       await refreshRecents()
       await refreshItems()
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      const shouldOfferRecovery =
+        message.includes('authentication failed') || message.startsWith('invalid header:')
+      if (shouldOfferRecovery) {
+        try {
+          const opened = await openRecoveryWizard(vaultPath)
+          if (opened) {
+            lastResult =
+              'Unlock failed (authentication failed). If your password is correct, the vault may be corrupted. Recovery wizard opened.'
+            return
+          }
+        } catch {
+          // Best-effort: recovery wizard is not required for wrong-password cases.
+        }
+      }
+      lastResult = message
+    }
+  }
+
+  const formatBackupTimestamp = (timestamp) => {
+    const parsed = Number(timestamp)
+    if (!Number.isFinite(parsed)) {
+      return String(timestamp)
+    }
+    return new Date(parsed * 1000).toLocaleString()
+  }
+
+  const closeRecoveryWizard = () => {
+    recoveryVisible = false
+    recoveryVaultPath = ''
+    recoveryBackups = []
+    recoverySelectedBackupPath = ''
+    recoveryBusy = false
+    recoveryError = ''
+  }
+
+  const openRecoveryWizard = async (path) => {
+    recoveryVaultPath = path
+    recoveryError = ''
+    recoveryBusy = true
+    try {
+      recoveryBackups = await window.npw.vaultBackupsList({ path })
+      recoverySelectedBackupPath = recoveryBackups[0]?.path ?? ''
+      recoveryVisible = recoveryBackups.length > 0
+      return recoveryVisible
+    } finally {
+      recoveryBusy = false
+    }
+  }
+
+  const recoverFromSelectedBackup = async () => {
+    if (!recoveryVaultPath || !recoverySelectedBackupPath) {
+      return
+    }
+    if (masterPassword.trim().length === 0) {
+      recoveryError = 'Master password is required to verify a backup before restoring.'
+      return
+    }
+    recoveryBusy = true
+    recoveryError = ''
+    try {
+      await window.npw.vaultCheck({ path: recoverySelectedBackupPath, masterPassword })
+      const result = await window.npw.vaultRecoverFromBackup({
+        path: recoveryVaultPath,
+        backupPath: recoverySelectedBackupPath
+      })
+      if (result?.corruptPath) {
+        lastResult = `Preserved corrupt vault at ${result.corruptPath}`
+      }
+      status = await window.npw.vaultUnlock({
+        path: recoveryVaultPath,
+        masterPassword
+      })
+      masterPassword = ''
+      closeRecoveryWizard()
+      lastResult = `Recovered vault from backup and unlocked: ${status.path}`
+      await refreshRecents()
+      await refreshItems()
+    } catch (error) {
+      recoveryError = formatError(error)
+    } finally {
+      recoveryBusy = false
     }
   }
 
@@ -131,6 +224,7 @@
       totpQrUrl = null
       totpQrVisible = false
       clearTotpInterval()
+      closeRecoveryWizard()
       lastResult = 'Vault locked'
     } catch (error) {
       lastResult = formatError(error)
@@ -699,6 +793,54 @@
       {/if}
     </section>
   {/if}
+
+  {#if recoveryVisible}
+    <div class="modal-backdrop">
+      <dialog class="modal" open aria-labelledby="recovery-title">
+        <h2 id="recovery-title">Recovery Wizard</h2>
+        <p class="muted">
+          Restore an encrypted backup to recover from a corrupted vault file. Restoring will overwrite the vault file and
+          preserve the current file as <span class="mono">.corrupt</span>.
+        </p>
+
+        {#if recoveryBackups.length === 0}
+          <p class="muted">No backups found.</p>
+        {:else}
+          <div class="backup-list" role="list">
+            {#each recoveryBackups as backup (backup.path)}
+              <label class="backup-row" role="listitem">
+                <input
+                  type="radio"
+                  name="recovery-backup"
+                  value={backup.path}
+                  bind:group={recoverySelectedBackupPath}
+                  disabled={recoveryBusy}
+                />
+                <div class="backup-meta">
+                  <strong>{backup.label || '(unlabeled)'}</strong>
+                  <span class="muted">
+                    {backup.itemCount} items · {formatBackupTimestamp(backup.timestamp)}
+                  </span>
+                  <span class="muted mono backup-path">{backup.path}</span>
+                </div>
+              </label>
+            {/each}
+          </div>
+        {/if}
+
+        {#if recoveryError}
+          <p class="callout">{recoveryError}</p>
+        {/if}
+
+        <div class="actions">
+          <button class="secondary" type="button" on:click={closeRecoveryWizard} disabled={recoveryBusy}>Cancel</button>
+          <button type="button" on:click={recoverFromSelectedBackup} disabled={recoveryBusy || !recoverySelectedBackupPath}>
+            {recoveryBusy ? 'Working…' : 'Restore Selected Backup'}
+          </button>
+        </div>
+      </dialog>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -923,5 +1065,59 @@
     border: 1px solid #e0d2a3;
     border-radius: 0.5rem;
     background: #fff6d7;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 21, 27, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    z-index: 1000;
+  }
+
+  .modal {
+    width: min(44rem, 92vw);
+    max-height: 90vh;
+    overflow: auto;
+    background: #ffffff;
+    border: 1px solid #93a8b5;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .backup-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .backup-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #93a8b5;
+    border-radius: 0.5rem;
+    background: #f4fbff;
+  }
+
+  .backup-row input {
+    margin-top: 0.2rem;
+  }
+
+  .backup-meta {
+    display: grid;
+    gap: 0.2rem;
+    width: 100%;
+  }
+
+  .backup-path {
+    font-size: 0.85rem;
+    word-break: break-word;
   }
 </style>

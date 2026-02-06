@@ -125,3 +125,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop auto-locks after inactivity and locks on suspend/lock screen, notifying the renderer.
 - [x] M9 slice complete: desktop renders passkey reference items with open-site and open-passkey-manager actions (best effort).
 - [x] M9 slice complete: desktop can render otpauth:// TOTP QR codes for login items (export flow).
+- [x] M9 slice complete: desktop recovery wizard lists backups (timestamps + item counts) and restores a selected backup, preserving the current vault as `.corrupt`.
