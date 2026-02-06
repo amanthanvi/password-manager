@@ -75,6 +75,7 @@ type RecentVault = {
   path: string
   label: string
   lastOpenedAt: number
+  vaultIdHex?: string | null
 }
 
 type ItemSummary = {
@@ -241,6 +242,10 @@ type UpdatePasskeyRefInput = {
 
 type VaultSession = {
   status: () => VaultStatus
+  vaultIdHex: () => string
+  quickUnlockIsEnabled: () => boolean
+  quickUnlockEnable: () => boolean
+  quickUnlockDisable: () => boolean
   listItems: (query?: string | null) => ItemSummary[]
   lock: () => void
   getLogin: (id: string) => LoginDetail
@@ -275,6 +280,8 @@ type AddonApi = {
   vaultStatus: (path: string) => VaultStatus
   vaultCheck: (path: string, masterPassword: string) => VaultStatus
   vaultUnlock: (path: string, masterPassword: string) => VaultSession
+  vaultUnlockQuick: (path: string, vaultIdHex: string) => VaultSession
+  quickUnlockHasEntry: (vaultIdHex: string) => boolean
   vaultListBackups: (path: string) => BackupCandidate[]
   vaultRecoverFromBackup: (vaultPath: string, backupPath: string) => VaultRecoveryResult
 }
@@ -506,9 +513,82 @@ function registerIpcHandlers(api: AddonApi) {
     const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
     session = api.vaultUnlock(safePath, safePassword)
     const status = session.status()
-    void upsertRecentVault(status.path, status.label)
+    const vaultIdHex = session.vaultIdHex()
+    void upsertRecentVault(status.path, status.label, vaultIdHex)
     resetAutoLockTimer()
     return status
+  })
+  ipcMain.handle('vault.unlock.quick', async (_event, payload: { path: string }) => {
+    const safePath = validateText(payload.path, 'path', 4096)
+    const recents = await loadRecents()
+    const recent = recents.find((entry) => entry.path === safePath)
+    const vaultIdHex = typeof recent?.vaultIdHex === 'string' ? recent.vaultIdHex : null
+    if (!vaultIdHex) {
+      throw new Error(
+        'Quick Unlock is not configured for this vault yet. Unlock with the master password once, then enable Quick Unlock.'
+      )
+    }
+    session = api.vaultUnlockQuick(safePath, vaultIdHex)
+    const status = session.status()
+    void upsertRecentVault(status.path, status.label, vaultIdHex)
+    resetAutoLockTimer()
+    return status
+  })
+  ipcMain.handle('quick_unlock.status_for_path', async (_event, payload: { path: string }) => {
+    const safePath = validateText(payload.path, 'path', 4096)
+    const recents = await loadRecents()
+    const recent = recents.find((entry) => entry.path === safePath)
+    const vaultIdHex = typeof recent?.vaultIdHex === 'string' ? recent.vaultIdHex : null
+    if (!vaultIdHex) {
+      return { available: true, configured: false, enabled: false, error: null }
+    }
+    try {
+      const enabled = api.quickUnlockHasEntry(vaultIdHex)
+      return { available: true, configured: true, enabled, error: null }
+    } catch (error) {
+      return {
+        available: false,
+        configured: true,
+        enabled: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+  ipcMain.handle('quick_unlock.status_current', () => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    try {
+      const enabled = session.quickUnlockIsEnabled()
+      return { available: true, configured: true, enabled, error: null }
+    } catch (error) {
+      return {
+        available: false,
+        configured: true,
+        enabled: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  })
+  ipcMain.handle('quick_unlock.enable_current', () => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const vaultIdHex = session.vaultIdHex()
+    const enabled = session.quickUnlockEnable()
+    const status = session.status()
+    void upsertRecentVault(status.path, status.label, vaultIdHex)
+    return enabled
+  })
+  ipcMain.handle('quick_unlock.disable_current', () => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const vaultIdHex = session.vaultIdHex()
+    const disabled = session.quickUnlockDisable()
+    const status = session.status()
+    void upsertRecentVault(status.path, status.label, vaultIdHex)
+    return disabled
   })
   ipcMain.handle('vault.lock', () => {
     lockSession('manual')
@@ -987,6 +1067,13 @@ function registerIpcHandlers(api: AddonApi) {
             return false
           }
           const candidate = entry as Partial<RecentVault>
+          const vaultIdHex = candidate.vaultIdHex
+          if (vaultIdHex != null && typeof vaultIdHex !== 'string') {
+            return false
+          }
+          if (typeof vaultIdHex === 'string' && !/^[0-9a-fA-F]{32}$/.test(vaultIdHex)) {
+            return false
+          }
           return typeof candidate.path === 'string' && typeof candidate.label === 'string'
         })
         .slice(0, MAX_RECENT_VAULTS)
@@ -1003,10 +1090,15 @@ function registerIpcHandlers(api: AddonApi) {
     await fs.writeFile(recentsPath, JSON.stringify(vaults.slice(0, MAX_RECENT_VAULTS), null, 2), 'utf8')
   }
 
-  async function upsertRecentVault(vaultPath: string, label: string) {
+  async function upsertRecentVault(vaultPath: string, label: string, vaultIdHex?: string) {
     const now = Date.now()
     const current = await loadRecents()
-    const next: RecentVault[] = [{ path: vaultPath, label, lastOpenedAt: now }, ...current.filter((entry) => entry.path !== vaultPath)]
+    const existing = current.find((entry) => entry.path === vaultPath)
+    const nextVaultIdHex = vaultIdHex ?? existing?.vaultIdHex ?? null
+    const next: RecentVault[] = [
+      { path: vaultPath, label, lastOpenedAt: now, vaultIdHex: nextVaultIdHex },
+      ...current.filter((entry) => entry.path !== vaultPath)
+    ]
     await saveRecents(next)
   }
 

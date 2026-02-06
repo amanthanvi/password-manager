@@ -426,6 +426,52 @@ pub fn unlock_vault_file_with_kek(
     })
 }
 
+pub fn unlock_vault_file_with_existing_kek(
+    vault_bytes: &[u8],
+    kek: &[u8; KEY_LEN],
+) -> Result<UnlockedVaultWithKek, VaultError> {
+    let parsed = parse_vault(vault_bytes)?;
+
+    let mut envelope_plaintext = decrypt(
+        kek,
+        &parsed.env_nonce,
+        parsed.env_ciphertext,
+        parsed.env_aad,
+    )?;
+    let envelope: EnvelopePlaintext = match from_cbor(&envelope_plaintext) {
+        Ok(value) => value,
+        Err(error) => {
+            envelope_plaintext.zeroize();
+            return Err(error);
+        }
+    };
+
+    let mut payload_key = derive_hkdf(&envelope.vault_key, b"NPW:v1:PAYLOAD")?;
+    let payload_plaintext = match decrypt(
+        &payload_key,
+        &parsed.payload_nonce,
+        parsed.payload_ciphertext,
+        parsed.payload_aad,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            payload_key.zeroize();
+            envelope_plaintext.zeroize();
+            return Err(error);
+        }
+    };
+
+    payload_key.zeroize();
+    envelope_plaintext.zeroize();
+
+    Ok(UnlockedVaultWithKek {
+        header: parsed.header,
+        envelope,
+        payload_plaintext,
+        kek: *kek,
+    })
+}
+
 pub fn parse_vault_header(vault_bytes: &[u8]) -> Result<VaultHeader, VaultError> {
     Ok(parse_vault(vault_bytes)?.header)
 }
@@ -778,7 +824,7 @@ mod tests {
 
     use super::{
         CreateVaultInput, KdfParams, VaultError, create_vault_file, reencrypt_vault_file_with_kek,
-        unlock_vault_file, unlock_vault_file_with_kek,
+        unlock_vault_file, unlock_vault_file_with_existing_kek, unlock_vault_file_with_kek,
     };
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -814,6 +860,30 @@ mod tests {
             .expect("unlock should succeed");
         assert_eq!(unlocked_again.payload_plaintext, new_payload);
         assert_eq!(unlocked_again.header.item_count, 5);
+    }
+
+    #[test]
+    fn unlock_with_existing_kek_matches_password_unlock() {
+        let payload = payload_bytes();
+        let file = create_vault_file(&CreateVaultInput {
+            master_password: "correct horse battery staple",
+            payload_plaintext: &payload,
+            item_count: 2,
+            vault_label: Some("Work"),
+            kdf_params: KdfParams::default(),
+        })
+        .expect("vault creation should succeed");
+
+        let unlocked = unlock_vault_file_with_kek(&file, "correct horse battery staple")
+            .expect("unlock should succeed");
+        let kek = *unlocked.kek();
+        let unlocked_quick =
+            unlock_vault_file_with_existing_kek(&file, &kek).expect("unlock should succeed");
+
+        assert_eq!(unlocked_quick.header, unlocked.header);
+        assert_eq!(unlocked_quick.envelope, unlocked.envelope);
+        assert_eq!(unlocked_quick.payload_plaintext, unlocked.payload_plaintext);
+        assert_eq!(unlocked_quick.kek(), unlocked.kek());
     }
 
     #[test]

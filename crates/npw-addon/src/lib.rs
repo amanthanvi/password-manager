@@ -2,13 +2,15 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use data_encoding::BASE32_NOPAD;
+use keyring::Entry;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
     CreateVaultInput, KdfParams, LoginItem, NoteItem, TotpAlgorithm, TotpConfig, UrlEntry,
     UrlMatchType, VaultItem, VaultPayload, assess_master_password, create_vault_file,
     decode_base32_secret, generate_totp, parse_otpauth_uri, parse_vault_header,
-    reencrypt_vault_file_with_kek, unlock_vault_file, unlock_vault_file_with_kek,
+    reencrypt_vault_file_with_kek, unlock_vault_file, unlock_vault_file_with_existing_kek,
+    unlock_vault_file_with_kek,
 };
 use npw_storage::{
     VaultLock, acquire_vault_lock, list_backups, read_vault, recover_from_backup, write_vault,
@@ -425,6 +427,39 @@ impl VaultSession {
             kdf_memory_kib: self.unlocked.header.kdf_params.memory_kib,
             kdf_iterations: self.unlocked.header.kdf_params.iterations,
             kdf_parallelism: self.unlocked.header.kdf_params.parallelism,
+        }
+    }
+
+    #[napi]
+    pub fn vault_id_hex(&self) -> String {
+        hex_encode(&self.unlocked.envelope.vault_id)
+    }
+
+    #[napi]
+    pub fn quick_unlock_is_enabled(&self) -> Result<bool> {
+        quick_unlock_has_entry_internal(self.vault_id_hex())
+    }
+
+    #[napi]
+    pub fn quick_unlock_enable(&self) -> Result<bool> {
+        let vault_id_hex = self.vault_id_hex();
+        let entry =
+            quick_unlock_entry(&vault_id_hex).map_err(|error| error_to_napi(error.to_string()))?;
+        entry
+            .set_secret(self.unlocked.kek())
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(true)
+    }
+
+    #[napi]
+    pub fn quick_unlock_disable(&self) -> Result<bool> {
+        let vault_id_hex = self.vault_id_hex();
+        let entry =
+            quick_unlock_entry(&vault_id_hex).map_err(|error| error_to_napi(error.to_string()))?;
+        match entry.delete_credential() {
+            Ok(()) => Ok(true),
+            Err(error) if is_keyring_no_entry(&error) => Ok(false),
+            Err(error) => Err(error_to_napi(error.to_string())),
         }
     }
 
@@ -1552,6 +1587,78 @@ impl VaultSession {
     }
 }
 
+fn validate_vault_id_hex(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(error_to_napi("vault_id_hex cannot be empty".to_owned()));
+    }
+    if trimmed.len() != 32 {
+        return Err(error_to_napi(
+            "vault_id_hex must be 32 hex characters".to_owned(),
+        ));
+    }
+    if !trimmed.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err(error_to_napi("vault_id_hex must be hex".to_owned()));
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+fn decode_vault_id_hex(raw: &str) -> Result<[u8; 16]> {
+    let normalized = validate_vault_id_hex(raw)?;
+    let bytes = normalized.as_bytes();
+    let mut output = [0_u8; 16];
+    for (index, chunk) in bytes.chunks_exact(2).enumerate() {
+        let high = vault_id_hex_nibble(chunk[0])?;
+        let low = vault_id_hex_nibble(chunk[1])?;
+        output[index] = (high << 4) | low;
+    }
+    Ok(output)
+}
+
+fn vault_id_hex_nibble(value: u8) -> Result<u8> {
+    match value {
+        b'0'..=b'9' => Ok(value - b'0'),
+        b'a'..=b'f' => Ok(value - b'a' + 10),
+        b'A'..=b'F' => Ok(value - b'A' + 10),
+        _ => Err(error_to_napi("vault_id_hex must be hex".to_owned())),
+    }
+}
+
+fn quick_unlock_service_name(vault_id_hex: &str) -> String {
+    let prefix = vault_id_hex.get(0..8).unwrap_or(vault_id_hex);
+    format!("npw Vault Key ({prefix})")
+}
+
+fn quick_unlock_entry(vault_id_hex: &str) -> std::result::Result<Entry, keyring::Error> {
+    let service = quick_unlock_service_name(vault_id_hex);
+    Entry::new(service.as_str(), vault_id_hex)
+}
+
+fn is_keyring_no_entry(error: &keyring::Error) -> bool {
+    matches!(error, keyring::Error::NoEntry)
+}
+
+fn quick_unlock_has_entry_internal(vault_id_hex: String) -> Result<bool> {
+    let vault_id_hex = validate_vault_id_hex(vault_id_hex.as_str())?;
+    let entry = quick_unlock_entry(vault_id_hex.as_str())
+        .map_err(|error| error_to_napi(error.to_string()))?;
+    match entry.get_secret() {
+        Ok(mut value) => {
+            let ok = value.len() == 32;
+            value.zeroize();
+            if ok {
+                Ok(true)
+            } else {
+                Err(error_to_napi(
+                    "quick unlock key is invalid length".to_owned(),
+                ))
+            }
+        }
+        Err(error) if is_keyring_no_entry(&error) => Ok(false),
+        Err(error) => Err(error_to_napi(error.to_string())),
+    }
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -2060,6 +2167,64 @@ pub fn vault_unlock(path: String, master_password: String) -> Result<VaultSessio
     let bytes = read_vault(path_ref).map_err(|error| error_to_napi(error.to_string()))?;
     let mut unlocked = unlock_vault_file_with_kek(&bytes, &master_password)
         .map_err(|error| error_to_napi(error.to_string()))?;
+    let payload = VaultPayload::from_cbor(&unlocked.payload_plaintext)
+        .map_err(|error| error_to_napi(error.to_string()))?;
+    unlocked.payload_plaintext.zeroize();
+    unlocked.payload_plaintext.clear();
+
+    Ok(VaultSession {
+        path,
+        lock: Some(lock),
+        unlocked,
+        payload,
+    })
+}
+
+#[napi]
+pub fn quick_unlock_has_entry(vault_id_hex: String) -> Result<bool> {
+    quick_unlock_has_entry_internal(vault_id_hex)
+}
+
+#[napi]
+pub fn vault_unlock_quick(path: String, vault_id_hex: String) -> Result<VaultSession> {
+    let path_ref = std::path::Path::new(&path);
+    let lock = acquire_vault_lock(path_ref).map_err(|error| error_to_napi(error.to_string()))?;
+    let bytes = read_vault(path_ref).map_err(|error| error_to_napi(error.to_string()))?;
+
+    let vault_id_hex = validate_vault_id_hex(vault_id_hex.as_str())?;
+    let expected_vault_id = decode_vault_id_hex(vault_id_hex.as_str())?;
+    let entry = quick_unlock_entry(vault_id_hex.as_str())
+        .map_err(|error| error_to_napi(error.to_string()))?;
+    let mut secret = match entry.get_secret() {
+        Ok(value) => value,
+        Err(error) if is_keyring_no_entry(&error) => {
+            return Err(error_to_napi(
+                "quick unlock is not enabled for this vault".to_owned(),
+            ));
+        }
+        Err(error) => return Err(error_to_napi(error.to_string())),
+    };
+
+    if secret.len() != 32 {
+        secret.zeroize();
+        return Err(error_to_napi(
+            "quick unlock key is invalid length".to_owned(),
+        ));
+    }
+
+    let mut kek = [0_u8; 32];
+    kek.copy_from_slice(&secret);
+    secret.zeroize();
+    let mut unlocked = unlock_vault_file_with_existing_kek(&bytes, &kek)
+        .map_err(|error| error_to_napi(error.to_string()))?;
+    kek.zeroize();
+
+    if unlocked.envelope.vault_id != expected_vault_id {
+        return Err(error_to_napi(
+            "quick unlock key does not match this vault".to_owned(),
+        ));
+    }
+
     let payload = VaultPayload::from_cbor(&unlocked.payload_plaintext)
         .map_err(|error| error_to_napi(error.to_string()))?;
     unlocked.payload_plaintext.zeroize();

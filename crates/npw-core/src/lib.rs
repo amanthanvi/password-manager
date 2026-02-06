@@ -39,5 +39,5 @@ pub use vault::{
     CreateVaultInput, EnvelopePlaintext, KdfParams, ReencryptVaultInput, UnlockedVault,
     UnlockedVaultWithKek, VaultError, VaultHeader, create_vault_file, parse_vault_header,
     reencrypt_vault_file, reencrypt_vault_file_with_kek, unlock_vault_file,
-    unlock_vault_file_with_kek,
+    unlock_vault_file_with_existing_kek, unlock_vault_file_with_kek,
 };

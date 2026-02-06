@@ -205,6 +205,13 @@ type AddPasskeyRefInput = {
   favorite?: boolean | null
 }
 
+type QuickUnlockStatus = {
+  available: boolean
+  configured: boolean
+  enabled: boolean
+  error: string | null
+}
+
 contextBridge.exposeInMainWorld('npw', {
   coreBanner: (): Promise<string> => ipcRenderer.invoke('core.banner'),
   configLoad: (): Promise<AppConfig> => ipcRenderer.invoke('config.load'),
@@ -238,7 +245,13 @@ contextBridge.exposeInMainWorld('npw', {
     ipcRenderer.invoke('vault.backups.recover', payload),
   vaultUnlock: (payload: { path: string; masterPassword: string }): Promise<VaultStatus> =>
     ipcRenderer.invoke('vault.unlock', payload),
+  vaultUnlockQuick: (payload: { path: string }): Promise<VaultStatus> => ipcRenderer.invoke('vault.unlock.quick', payload),
   vaultLock: (): Promise<boolean> => ipcRenderer.invoke('vault.lock'),
+  quickUnlockStatusForPath: (payload: { path: string }): Promise<QuickUnlockStatus> =>
+    ipcRenderer.invoke('quick_unlock.status_for_path', payload),
+  quickUnlockStatusCurrent: (): Promise<QuickUnlockStatus> => ipcRenderer.invoke('quick_unlock.status_current'),
+  quickUnlockEnable: (): Promise<boolean> => ipcRenderer.invoke('quick_unlock.enable_current'),
+  quickUnlockDisable: (): Promise<boolean> => ipcRenderer.invoke('quick_unlock.disable_current'),
   importCsvPreview: (payload: { inputPath: string }): Promise<ImportPreview> => ipcRenderer.invoke('import.csv.preview', payload),
   importCsvApply: (payload: { inputPath: string; decisions: ImportDuplicateDecision[] }): Promise<ImportResult> =>
     ipcRenderer.invoke('import.csv.apply', payload),

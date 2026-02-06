@@ -13,6 +13,7 @@ csv.workspace = true
 data-encoding.workspace = true
 directories.workspace = true
 getrandom.workspace = true
+keyring.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
 npw-core = { path = "../npw-core" }
