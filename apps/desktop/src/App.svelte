@@ -1,6 +1,7 @@
 <script>
   import { onDestroy, onMount } from 'svelte'
   import { APP_TITLE, formatStatus } from './lib/app'
+  import jsQR from 'jsqr'
 
   let vaultPath = '/tmp/npw-desktop.npw'
   let vaultLabel = 'Desktop Vault'
@@ -18,6 +19,15 @@
   let totpInterval = null
   let totpQrUrl = null
   let totpQrVisible = false
+  let totpImportVisible = false
+  let totpImportValue = ''
+  let totpImportError = ''
+  let totpImportBusy = false
+  let totpImportVideo = null
+  let totpImportStream = null
+  let totpImportCanvas = null
+  let totpImportContext = null
+  let totpImportFrameId = null
   let recents = []
   let newNoteTitle = ''
   let newNoteBody = ''
@@ -98,6 +108,7 @@
       totp = null
       totpQrUrl = null
       totpQrVisible = false
+      closeTotpImport()
       clearTotpInterval()
       masterPassword = ''
       recoveryVisible = false
@@ -129,6 +140,7 @@
   })
 
   onDestroy(() => {
+    stopTotpImportCamera()
     clearTotpInterval()
     if (typeof detachVaultLocked === 'function') {
       detachVaultLocked()
@@ -748,6 +760,134 @@
     }
   }
 
+  const openTotpImport = () => {
+    if (!selectedItem) {
+      return
+    }
+    totpImportVisible = true
+    totpImportValue = ''
+    totpImportError = ''
+    totpImportBusy = false
+    stopTotpImportCamera()
+  }
+
+  const closeTotpImport = () => {
+    stopTotpImportCamera()
+    totpImportVisible = false
+    totpImportValue = ''
+    totpImportError = ''
+    totpImportBusy = false
+  }
+
+  const stopTotpImportCamera = () => {
+    if (totpImportFrameId) {
+      cancelAnimationFrame(totpImportFrameId)
+      totpImportFrameId = null
+    }
+    if (totpImportStream) {
+      for (const track of totpImportStream.getTracks()) {
+        track.stop()
+      }
+      totpImportStream = null
+    }
+    if (totpImportVideo) {
+      totpImportVideo.srcObject = null
+    }
+    if (totpImportCanvas) {
+      totpImportCanvas.width = 0
+      totpImportCanvas.height = 0
+    }
+    totpImportCanvas = null
+    totpImportContext = null
+  }
+
+  const scanTotpImportFrame = () => {
+    if (!totpImportStream || !totpImportVideo || !totpImportContext || !totpImportCanvas) {
+      return
+    }
+
+    const width = totpImportVideo.videoWidth
+    const height = totpImportVideo.videoHeight
+    if (!width || !height) {
+      totpImportFrameId = requestAnimationFrame(scanTotpImportFrame)
+      return
+    }
+
+    totpImportCanvas.width = width
+    totpImportCanvas.height = height
+    totpImportContext.drawImage(totpImportVideo, 0, 0, width, height)
+    const imageData = totpImportContext.getImageData(0, 0, width, height)
+    const decoded = jsQR(imageData.data, imageData.width, imageData.height)
+    if (decoded?.data) {
+      totpImportValue = decoded.data
+      pushToast({ kind: 'success', title: 'Scanned QR code', timeoutMs: 3500 })
+      stopTotpImportCamera()
+      return
+    }
+
+    totpImportFrameId = requestAnimationFrame(scanTotpImportFrame)
+  }
+
+  const startTotpImportCamera = async () => {
+    totpImportError = ''
+    stopTotpImportCamera()
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Camera is not supported in this environment.')
+      }
+      totpImportStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: 'environment' }
+      })
+      if (!totpImportVideo) {
+        throw new Error('Camera preview is not ready.')
+      }
+      totpImportVideo.srcObject = totpImportStream
+      await totpImportVideo.play()
+      totpImportCanvas = document.createElement('canvas')
+      totpImportContext = totpImportCanvas.getContext('2d', { willReadFrequently: true })
+      if (!totpImportContext) {
+        throw new Error('Unable to initialize camera frame reader.')
+      }
+      scanTotpImportFrame()
+    } catch (error) {
+      totpImportError = formatError(error)
+      stopTotpImportCamera()
+    }
+  }
+
+  const submitTotpImport = async () => {
+    if (!selectedItem) {
+      return
+    }
+    const value = totpImportValue.trim()
+    if (value.length === 0) {
+      totpImportError = 'Paste an otpauth:// URI or base32 secret, or scan a QR code.'
+      return
+    }
+
+    const id = selectedItem.id
+    totpImportBusy = true
+    totpImportError = ''
+    stopTotpImportCamera()
+    try {
+      await window.npw.loginTotpSet({ id, value })
+      await refreshItems()
+      const refreshed = items.find((item) => item.id === id)
+      if (refreshed) {
+        await selectItem(refreshed)
+      }
+      totpImportVisible = false
+      totpImportValue = ''
+      pushToast({ kind: 'success', title: 'Imported TOTP', timeoutMs: 3500 })
+    } catch (error) {
+      totpImportError = formatError(error)
+      pushToast({ kind: 'error', title: 'TOTP import failed', detail: totpImportError })
+    } finally {
+      totpImportBusy = false
+    }
+  }
+
   const openPasskeySite = async () => {
     if (!selectedItem) {
       return
@@ -1073,9 +1213,9 @@
         </div>
       </div>
 
-      {#if loginDetail.hasTotp}
-        <div class="field">
-          <div class="label">TOTP</div>
+      <div class="field">
+        <div class="label">TOTP</div>
+        {#if loginDetail.hasTotp}
           {#if totp}
             <div class="inline">
               <span class="totp">{totp.code}</span>
@@ -1091,8 +1231,13 @@
           {:else}
             <div class="muted">(loading...)</div>
           {/if}
-        </div>
-      {/if}
+        {:else}
+          <div class="inline">
+            <span class="muted">(none)</span>
+            <button class="secondary" type="button" on:click={openTotpImport}>Import QR / Paste</button>
+          </div>
+        {/if}
+      </div>
 
       <div class="field">
         <div class="label">URLs</div>
@@ -1178,6 +1323,60 @@
         </div>
       {/if}
     </section>
+  {/if}
+
+  {#if totpImportVisible}
+    <div class="modal-backdrop">
+      <dialog class="modal" open aria-labelledby="totp-import-title">
+        <h2 id="totp-import-title">Import TOTP</h2>
+        <p class="muted">
+          Scan a QR code or paste an <span class="mono">otpauth://</span> URI or base32 secret. Camera access is used
+          only on this screen.
+        </p>
+
+        <div class="totp-import">
+          <div class="totp-import-preview">
+            <video class="camera" bind:this={totpImportVideo} autoplay playsinline muted></video>
+            {#if !totpImportStream}
+              <p class="muted">Camera is off.</p>
+            {/if}
+            <div class="actions">
+              <button type="button" on:click={startTotpImportCamera} disabled={totpImportBusy || totpImportStream}>
+                {totpImportStream ? 'Camera On' : 'Start Camera'}
+              </button>
+              <button
+                class="secondary"
+                type="button"
+                on:click={stopTotpImportCamera}
+                disabled={totpImportBusy || !totpImportStream}
+              >
+                Stop Camera
+              </button>
+            </div>
+          </div>
+
+          <label>
+            otpauth:// URI or base32 secret
+            <textarea bind:value={totpImportValue} rows="3" disabled={totpImportBusy}></textarea>
+          </label>
+        </div>
+
+        {#if totpImportError}
+          <p class="callout">{totpImportError}</p>
+        {/if}
+
+        <div class="actions">
+          <button class="secondary" type="button" on:click={closeTotpImport} disabled={totpImportBusy}>Cancel</button>
+          <button
+            type="button"
+            on:click={submitTotpImport}
+            disabled={totpImportBusy || totpImportValue.trim().length === 0}
+          >
+            {totpImportBusy ? 'Importing…' : 'Import TOTP'}
+          </button>
+        </div>
+      </dialog>
+    </div>
   {/if}
 
   {#if recoveryVisible}
@@ -1534,6 +1733,24 @@
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
     display: grid;
     gap: 0.75rem;
+  }
+
+  .totp-import {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .totp-import-preview {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .camera {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: rgba(12, 21, 27, 0.9);
+    border: 1px solid #93a8b5;
+    border-radius: 0.5rem;
   }
 
   .backup-list {
