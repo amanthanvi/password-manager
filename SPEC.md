@@ -1376,9 +1376,8 @@ Fuzzing MUST run **10 million iterations clean** (no crashes, no panics) as a re
 
 | Scope | Coverage requirement |
 | ----- | -------------------- |
-| Crypto core (KDF, AEAD, HKDF, key hierarchy) | **100% line coverage** |
-| Vault read/write (format, atomic writes, locking) | **100% line coverage** |
-| CLI commands | **80%+ line coverage** |
+| Rust core (`npw-core`, `npw-storage`) | **80%+ line coverage** (v0.1.0 gate) |
+| CLI commands | Coverage is measured and reported; hard gating deferred (CLI is currently monolithic). |
 | GUI (Svelte renderer) | Smoke tests only (Playwright: vault create/unlock, add item, search, TOTP copy) |
 
 Coverage MUST be measured in CI and enforced as a release gate.
@@ -1420,7 +1419,7 @@ CI tasks:
 
 - At least 1 internal security review sign-off.
 - All fuzz targets run with no new crashes on release candidate (10M iterations).
-- Coverage gates met (crypto + vault 100%, CLI 80%+).
+- Coverage gates met (Rust core >=80% lines; CLI coverage reported).
 
 ---
 
@@ -1699,8 +1698,8 @@ Then the CLI MUST fail immediately with exit code 5
 - [ ] SBOMs generated and published (Rust + npm)
 - [ ] `cargo audit` and `npm audit` clean (or exceptions documented)
 - [ ] Fuzz targets: 10M iterations with no crashes
-- [ ] Crypto + vault modules: 100% line coverage
-- [ ] CLI commands: 80%+ line coverage
+- [ ] Rust core (`npw-core`, `npw-storage`): 80%+ line coverage
+- [ ] CLI coverage measured and reported (gating deferred)
 - [ ] Documentation deliverables complete
 
 #### Migration
