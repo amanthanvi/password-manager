@@ -250,10 +250,16 @@ pub struct ItemSummary {
 }
 
 #[napi(object)]
+pub struct UrlEntryView {
+    pub url: String,
+    pub match_type: String,
+}
+
+#[napi(object)]
 pub struct LoginDetail {
     pub id: String,
     pub title: String,
-    pub urls: Vec<String>,
+    pub urls: Vec<UrlEntryView>,
     pub username: Option<String>,
     pub has_password: bool,
     pub has_totp: bool,
@@ -298,21 +304,60 @@ pub struct TotpCode {
 }
 
 #[napi(object)]
+pub struct UrlEntryInput {
+    pub url: String,
+    pub match_type: Option<String>,
+}
+
+#[napi(object)]
 pub struct AddLoginInput {
     pub title: String,
-    pub url: Option<String>,
+    pub urls: Option<Vec<UrlEntryInput>>,
     pub username: Option<String>,
     pub password: Option<String>,
     pub notes: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
 }
 
 #[napi(object)]
 pub struct UpdateLoginInput {
     pub id: String,
     pub title: String,
-    pub url: Option<String>,
+    pub urls: Option<Vec<UrlEntryInput>>,
     pub username: Option<String>,
     pub notes: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
+}
+
+#[napi(object)]
+pub struct AddNoteInput {
+    pub title: String,
+    pub body: String,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
+}
+
+#[napi(object)]
+pub struct UpdateNoteInput {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
+}
+
+#[napi(object)]
+pub struct AddPasskeyRefInput {
+    pub title: String,
+    pub rp_id: String,
+    pub rp_name: Option<String>,
+    pub user_display_name: Option<String>,
+    pub credential_id_hex: String,
+    pub notes: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
 }
 
 #[napi(object)]
@@ -320,6 +365,8 @@ pub struct UpdatePasskeyRefInput {
     pub id: String,
     pub title: String,
     pub notes: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub favorite: Option<bool>,
 }
 
 #[napi]
@@ -373,7 +420,14 @@ impl VaultSession {
         Ok(LoginDetail {
             id: login.id.clone(),
             title: login.title.clone(),
-            urls: login.urls.iter().map(|entry| entry.url.clone()).collect(),
+            urls: login
+                .urls
+                .iter()
+                .map(|entry| UrlEntryView {
+                    url: entry.url.clone(),
+                    match_type: url_match_type_name(entry.match_type.clone()).to_owned(),
+                })
+                .collect(),
             username: login.username.clone(),
             has_password: login.password.is_some(),
             has_totp: login.totp.is_some(),
@@ -540,15 +594,15 @@ impl VaultSession {
     }
 
     #[napi]
-    pub fn add_note(&mut self, title: String, body: String) -> Result<String> {
+    pub fn add_note(&mut self, input: AddNoteInput) -> Result<String> {
         let now = unix_seconds_now();
         let id = Uuid::new_v4().to_string();
         let note = NoteItem {
             id: id.clone(),
-            title,
-            body,
-            tags: Vec::new(),
-            favorite: false,
+            title: input.title,
+            body: input.body,
+            tags: normalize_tags(input.tags),
+            favorite: input.favorite.unwrap_or(false),
             created_at: now,
             updated_at: now,
         };
@@ -562,21 +616,27 @@ impl VaultSession {
     }
 
     #[napi]
-    pub fn update_note(&mut self, id: String, title: String, body: String) -> Result<bool> {
+    pub fn update_note(&mut self, input: UpdateNoteInput) -> Result<bool> {
         let now = unix_seconds_now();
         let index = self
             .payload
             .items
             .iter()
-            .position(|item| item.id() == id)
+            .position(|item| item.id() == input.id)
             .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
 
         let VaultItem::Note(note) = &mut self.payload.items[index] else {
             return Err(error_to_napi("item is not a note".to_owned()));
         };
 
-        note.title = title;
-        note.body = body;
+        note.title = input.title;
+        note.body = input.body;
+        if let Some(tags) = input.tags {
+            note.tags = normalize_tags(Some(tags));
+        }
+        if let Some(favorite) = input.favorite {
+            note.favorite = favorite;
+        }
         note.updated_at = now;
         note.validate()
             .map_err(|error| error_to_napi(error.to_string()))?;
@@ -591,22 +651,7 @@ impl VaultSession {
     pub fn add_login(&mut self, input: AddLoginInput) -> Result<String> {
         let now = unix_seconds_now();
         let id = Uuid::new_v4().to_string();
-        let urls = input
-            .url
-            .and_then(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_owned())
-                }
-            })
-            .into_iter()
-            .map(|url| UrlEntry {
-                url,
-                match_type: UrlMatchType::Exact,
-            })
-            .collect();
+        let urls = normalize_urls(input.urls)?;
         let username = input.username.and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -631,8 +676,8 @@ impl VaultSession {
             password,
             totp: None,
             notes,
-            tags: Vec::new(),
-            favorite: false,
+            tags: normalize_tags(input.tags),
+            favorite: input.favorite.unwrap_or(false),
             created_at: now,
             updated_at: now,
         };
@@ -660,22 +705,9 @@ impl VaultSession {
         };
 
         login.title = input.title;
-        login.urls = input
-            .url
-            .and_then(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_owned())
-                }
-            })
-            .into_iter()
-            .map(|url| UrlEntry {
-                url,
-                match_type: UrlMatchType::Exact,
-            })
-            .collect();
+        if input.urls.is_some() {
+            login.urls = normalize_urls(input.urls)?;
+        }
         login.username = input.username.and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -687,6 +719,12 @@ impl VaultSession {
         login.notes = input
             .notes
             .and_then(|value| if value.is_empty() { None } else { Some(value) });
+        if let Some(tags) = input.tags {
+            login.tags = normalize_tags(Some(tags));
+        }
+        if let Some(favorite) = input.favorite {
+            login.favorite = favorite;
+        }
         login.updated_at = now;
         login
             .validate()
@@ -716,6 +754,12 @@ impl VaultSession {
         passkey.notes = input
             .notes
             .and_then(|value| if value.is_empty() { None } else { Some(value) });
+        if let Some(tags) = input.tags {
+            passkey.tags = normalize_tags(Some(tags));
+        }
+        if let Some(favorite) = input.favorite {
+            passkey.favorite = favorite;
+        }
         passkey.updated_at = now;
         passkey
             .validate()
@@ -725,6 +769,53 @@ impl VaultSession {
         self.persist()
             .map_err(|error| error_to_napi(error.to_string()))?;
         Ok(true)
+    }
+
+    #[napi]
+    pub fn add_passkey_ref(&mut self, input: AddPasskeyRefInput) -> Result<String> {
+        let now = unix_seconds_now();
+        let id = Uuid::new_v4().to_string();
+        let credential_id = hex_decode(input.credential_id_hex.trim())?;
+        let rp_name = input.rp_name.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        });
+        let user_display_name = input.user_display_name.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        });
+        let notes = input
+            .notes
+            .and_then(|value| if value.is_empty() { None } else { Some(value) });
+
+        let passkey = npw_core::PasskeyRefItem {
+            id: id.clone(),
+            title: input.title,
+            rp_id: input.rp_id,
+            rp_name,
+            user_display_name,
+            credential_id,
+            notes,
+            tags: normalize_tags(input.tags),
+            favorite: input.favorite.unwrap_or(false),
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.payload
+            .add_item(VaultItem::PasskeyRef(passkey), now)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(id)
     }
 
     #[napi]
@@ -807,6 +898,93 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(output, "{byte:02x}");
     }
     output
+}
+
+fn hex_decode(raw: &str) -> Result<Vec<u8>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(error_to_napi(
+            "credential_id_hex cannot be empty".to_owned(),
+        ));
+    }
+    if !trimmed.len().is_multiple_of(2) {
+        return Err(error_to_napi(
+            "credential_id_hex must have an even number of characters".to_owned(),
+        ));
+    }
+
+    let mut output = Vec::with_capacity(trimmed.len() / 2);
+    let mut chars = trimmed.chars();
+    while let (Some(high), Some(low)) = (chars.next(), chars.next()) {
+        let value = (hex_nibble(high)? << 4) | hex_nibble(low)?;
+        output.push(value);
+    }
+    Ok(output)
+}
+
+fn hex_nibble(value: char) -> Result<u8> {
+    match value {
+        '0'..='9' => Ok(value as u8 - b'0'),
+        'a'..='f' => Ok(value as u8 - b'a' + 10),
+        'A'..='F' => Ok(value as u8 - b'A' + 10),
+        _ => Err(error_to_napi("credential_id_hex must be hex".to_owned())),
+    }
+}
+
+fn normalize_tags(raw: Option<Vec<String>>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut tags = Vec::new();
+    for raw_tag in raw.unwrap_or_default() {
+        let normalized = collapse_tag_whitespace(raw_tag.as_str());
+        if normalized.is_empty() {
+            continue;
+        }
+        if seen.insert(normalized.to_lowercase()) {
+            tags.push(normalized);
+        }
+    }
+    tags
+}
+
+fn collapse_tag_whitespace(raw: &str) -> String {
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_urls(raw: Option<Vec<UrlEntryInput>>) -> Result<Vec<UrlEntry>> {
+    let mut urls = Vec::new();
+    for entry in raw.unwrap_or_default() {
+        let trimmed = entry.url.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let match_type = match entry.match_type.as_deref() {
+            None => UrlMatchType::Exact,
+            Some(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "exact" => UrlMatchType::Exact,
+                "domain" => UrlMatchType::Domain,
+                "subdomain" => UrlMatchType::Subdomain,
+                _ => {
+                    return Err(error_to_napi(
+                        "url match_type must be exact|domain|subdomain".to_owned(),
+                    ));
+                }
+            },
+        };
+
+        urls.push(UrlEntry {
+            url: trimmed.to_owned(),
+            match_type,
+        });
+    }
+    Ok(urls)
+}
+
+fn url_match_type_name(value: UrlMatchType) -> &'static str {
+    match value {
+        UrlMatchType::Exact => "exact",
+        UrlMatchType::Domain => "domain",
+        UrlMatchType::Subdomain => "subdomain",
+    }
 }
 
 fn login_totp_uri(title: &str, username: Option<&str>, config: &npw_core::TotpConfig) -> String {

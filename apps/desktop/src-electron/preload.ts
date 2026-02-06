@@ -63,10 +63,15 @@ type ItemSummary = {
   tags: string[]
 }
 
+type UrlEntry = {
+  url: string
+  matchType: 'exact' | 'domain' | 'subdomain'
+}
+
 type LoginDetail = {
   id: string
   title: string
-  urls: string[]
+  urls: UrlEntry[]
   username: string | null
   hasPassword: boolean
   hasTotp: boolean
@@ -118,12 +123,55 @@ type VaultRecoveryResult = {
   corruptPath: string | null
 }
 
+type UrlEntryInput = {
+  url: string
+  matchType?: string | null
+}
+
 type AddLoginInput = {
   title: string
-  url?: string | null
+  urls?: UrlEntryInput[] | null
   username?: string | null
   password?: string | null
   notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type UpdateLoginInput = {
+  id: string
+  title: string
+  urls?: UrlEntryInput[] | null
+  username?: string | null
+  notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type AddNoteInput = {
+  title: string
+  body: string
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type UpdateNoteInput = {
+  id: string
+  title: string
+  body: string
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type AddPasskeyRefInput = {
+  title: string
+  rpId: string
+  rpName?: string | null
+  userDisplayName?: string | null
+  credentialIdHex: string
+  notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
 }
 
 contextBridge.exposeInMainWorld('npw', {
@@ -159,15 +207,21 @@ contextBridge.exposeInMainWorld('npw', {
   loginGet: (payload: { id: string }): Promise<LoginDetail> => ipcRenderer.invoke('item.login.get', payload),
   noteGet: (payload: { id: string }): Promise<NoteDetail> => ipcRenderer.invoke('item.note.get', payload),
   passkeyRefGet: (payload: { id: string }): Promise<PasskeyRefDetail> => ipcRenderer.invoke('item.passkey.get', payload),
-  passkeyRefUpdate: (payload: { id: string; title: string; notes?: string | null }): Promise<boolean> =>
+  passkeyRefAdd: (payload: AddPasskeyRefInput): Promise<string> => ipcRenderer.invoke('item.passkey.add', payload),
+  passkeyRefUpdate: (payload: {
+    id: string
+    title: string
+    notes?: string | null
+    tags?: string[] | null
+    favorite?: boolean | null
+  }): Promise<boolean> =>
     ipcRenderer.invoke('item.passkey.update', payload),
   passkeyOpenSite: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.passkey.open-site', payload),
   passkeyOpenManager: (): Promise<boolean> => ipcRenderer.invoke('passkey.open-manager'),
-  noteAdd: (payload: { title: string; body: string }): Promise<string> => ipcRenderer.invoke('item.note.add', payload),
-  noteUpdate: (payload: { id: string; title: string; body: string }): Promise<boolean> =>
-    ipcRenderer.invoke('item.note.update', payload),
+  noteAdd: (payload: AddNoteInput): Promise<string> => ipcRenderer.invoke('item.note.add', payload),
+  noteUpdate: (payload: UpdateNoteInput): Promise<boolean> => ipcRenderer.invoke('item.note.update', payload),
   loginAdd: (payload: AddLoginInput): Promise<string> => ipcRenderer.invoke('item.login.add', payload),
-  loginUpdate: (payload: { id: string; title: string; url?: string | null; username?: string | null; notes?: string | null }): Promise<boolean> =>
+  loginUpdate: (payload: UpdateLoginInput): Promise<boolean> =>
     ipcRenderer.invoke('item.login.update', payload),
   itemDelete: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.delete', payload),
   loginCopyUsername: (payload: { id: string }): Promise<boolean> =>

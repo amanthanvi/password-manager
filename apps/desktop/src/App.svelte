@@ -17,6 +17,8 @@
   let passkeyDetail = null
   let passkeyEditTitle = ''
   let passkeyEditNotes = ''
+  let passkeyEditTagsRaw = ''
+  let passkeyEditFavorite = false
   let passkeyEditBusy = false
   let passkeyEditError = ''
   let totp = null
@@ -35,21 +37,39 @@
   let recents = []
   let newNoteTitle = ''
   let newNoteBody = ''
+  let newNoteTagsRaw = ''
+  let newNoteFavorite = false
   let noteEditTitle = ''
   let noteEditBody = ''
+  let noteEditTagsRaw = ''
+  let noteEditFavorite = false
   let noteEditBusy = false
   let noteEditError = ''
   let newLoginTitle = ''
-  let newLoginUrl = ''
+  let newLoginUrls = [{ url: '', matchType: 'exact' }]
   let newLoginUsername = ''
   let newLoginPassword = ''
   let newLoginNotes = ''
+  let newLoginTagsRaw = ''
+  let newLoginFavorite = false
   let loginEditTitle = ''
-  let loginEditUrl = ''
+  let loginEditUrls = [{ url: '', matchType: 'exact' }]
   let loginEditUsername = ''
   let loginEditNotes = ''
+  let loginEditTagsRaw = ''
+  let loginEditFavorite = false
   let loginEditBusy = false
   let loginEditError = ''
+  let newPasskeyTitle = ''
+  let newPasskeyRpId = ''
+  let newPasskeyRpName = ''
+  let newPasskeyUserDisplayName = ''
+  let newPasskeyCredentialIdHex = ''
+  let newPasskeyNotes = ''
+  let newPasskeyTagsRaw = ''
+  let newPasskeyFavorite = false
+  let newPasskeyBusy = false
+  let newPasskeyError = ''
   let detachVaultLocked = null
   let activityListener = null
   let lastActivityPingAt = 0
@@ -71,6 +91,51 @@
   let revealPasswordTimeoutId = null
   let toastNextId = 0
   let toasts = []
+  let filterType = 'all'
+  let filterFavoritesOnly = false
+  let filterTag = ''
+
+  $: availableTags = (() => {
+    const seen = Object.create(null)
+    const tags = []
+    for (const item of items) {
+      const itemTags = Array.isArray(item.tags) ? item.tags : []
+      for (const rawTag of itemTags) {
+        if (typeof rawTag !== 'string') {
+          continue
+        }
+        const normalized = rawTag.trim().toLowerCase()
+        if (normalized.length === 0) {
+          continue
+        }
+        if (seen[normalized]) {
+          continue
+        }
+        seen[normalized] = true
+        tags.push(normalized)
+      }
+    }
+    tags.sort()
+    return tags
+  })()
+
+  $: itemsView = items.filter((item) => {
+    if (filterType !== 'all' && item.itemType !== filterType) {
+      return false
+    }
+    if (filterFavoritesOnly && !item.favorite) {
+      return false
+    }
+    const needle = filterTag.trim().toLowerCase()
+    if (needle.length > 0) {
+      const tags = Array.isArray(item.tags) ? item.tags : []
+      const matchesTag = tags.some((tag) => String(tag).trim().toLowerCase() === needle)
+      if (!matchesTag) {
+        return false
+      }
+    }
+    return true
+  })
 
   const dismissToast = (id) => {
     toasts = toasts.filter((toast) => toast.id !== id)
@@ -90,6 +155,42 @@
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
       setTimeout(() => dismissToast(id), timeoutMs)
     }
+  }
+
+  const collapseWhitespace = (value) => String(value).split(/\s+/).filter(Boolean).join(' ')
+
+  const parseTagsRaw = (raw) => {
+    const parts = String(raw)
+      .split(';')
+      .map((tag) => collapseWhitespace(tag).trim())
+      .filter((tag) => tag.length > 0)
+
+    const seen = Object.create(null)
+    const tags = []
+    for (const tag of parts) {
+      const key = tag.toLowerCase()
+      if (seen[key]) {
+        continue
+      }
+      seen[key] = true
+      tags.push(tag)
+    }
+    return tags
+  }
+
+  const formatTagsRaw = (tags) => (Array.isArray(tags) && tags.length > 0 ? tags.join('; ') : '')
+
+  const normalizeUrlInputs = (entries) =>
+    (Array.isArray(entries) ? entries : [])
+      .map((entry) => ({
+        url: String(entry?.url ?? '').trim(),
+        matchType: entry?.matchType === 'domain' || entry?.matchType === 'subdomain' ? entry.matchType : 'exact'
+      }))
+      .filter((entry) => entry.url.length > 0)
+
+  const ensureUrlEditorRows = (entries) => {
+    const normalized = normalizeUrlInputs(entries)
+    return normalized.length > 0 ? normalized : [{ url: '', matchType: 'exact' }]
   }
 
   onMount(async () => {
@@ -118,19 +219,25 @@
       selectedItem = null
       loginDetail = null
       loginEditTitle = ''
-      loginEditUrl = ''
+      loginEditUrls = [{ url: '', matchType: 'exact' }]
       loginEditUsername = ''
       loginEditNotes = ''
+      loginEditTagsRaw = ''
+      loginEditFavorite = false
       loginEditBusy = false
       loginEditError = ''
       noteDetail = null
       noteEditTitle = ''
       noteEditBody = ''
+      noteEditTagsRaw = ''
+      noteEditFavorite = false
       noteEditBusy = false
       noteEditError = ''
       passkeyDetail = null
       passkeyEditTitle = ''
       passkeyEditNotes = ''
+      passkeyEditTagsRaw = ''
+      passkeyEditFavorite = false
       passkeyEditBusy = false
       passkeyEditError = ''
       totp = null
@@ -139,6 +246,27 @@
       closeTotpImport()
       clearTotpInterval()
       masterPassword = ''
+      newNoteTitle = ''
+      newNoteBody = ''
+      newNoteTagsRaw = ''
+      newNoteFavorite = false
+      newLoginTitle = ''
+      newLoginUrls = [{ url: '', matchType: 'exact' }]
+      newLoginUsername = ''
+      newLoginPassword = ''
+      newLoginNotes = ''
+      newLoginTagsRaw = ''
+      newLoginFavorite = false
+      newPasskeyTitle = ''
+      newPasskeyRpId = ''
+      newPasskeyRpName = ''
+      newPasskeyUserDisplayName = ''
+      newPasskeyCredentialIdHex = ''
+      newPasskeyNotes = ''
+      newPasskeyTagsRaw = ''
+      newPasskeyFavorite = false
+      newPasskeyBusy = false
+      newPasskeyError = ''
       recoveryVisible = false
       recoveryVaultPath = ''
       recoveryBackups = []
@@ -321,19 +449,25 @@
       selectedItem = null
       loginDetail = null
       loginEditTitle = ''
-      loginEditUrl = ''
+      loginEditUrls = [{ url: '', matchType: 'exact' }]
       loginEditUsername = ''
       loginEditNotes = ''
+      loginEditTagsRaw = ''
+      loginEditFavorite = false
       loginEditBusy = false
       loginEditError = ''
       noteDetail = null
       noteEditTitle = ''
       noteEditBody = ''
+      noteEditTagsRaw = ''
+      noteEditFavorite = false
       noteEditBusy = false
       noteEditError = ''
       passkeyDetail = null
       passkeyEditTitle = ''
       passkeyEditNotes = ''
+      passkeyEditTagsRaw = ''
+      passkeyEditFavorite = false
       passkeyEditBusy = false
       passkeyEditError = ''
       totp = null
@@ -341,6 +475,27 @@
       totpQrVisible = false
       closeTotpImport()
       clearTotpInterval()
+      newNoteTitle = ''
+      newNoteBody = ''
+      newNoteTagsRaw = ''
+      newNoteFavorite = false
+      newLoginTitle = ''
+      newLoginUrls = [{ url: '', matchType: 'exact' }]
+      newLoginUsername = ''
+      newLoginPassword = ''
+      newLoginNotes = ''
+      newLoginTagsRaw = ''
+      newLoginFavorite = false
+      newPasskeyTitle = ''
+      newPasskeyRpId = ''
+      newPasskeyRpName = ''
+      newPasskeyUserDisplayName = ''
+      newPasskeyCredentialIdHex = ''
+      newPasskeyNotes = ''
+      newPasskeyTagsRaw = ''
+      newPasskeyFavorite = false
+      newPasskeyBusy = false
+      newPasskeyError = ''
       closeRecoveryWizard()
       clearRevealedPassword()
       lastResult = 'Vault locked'
@@ -508,9 +663,16 @@
 
   const addNote = async () => {
     try {
-      const id = await window.npw.noteAdd({ title: newNoteTitle, body: newNoteBody })
+      const id = await window.npw.noteAdd({
+        title: newNoteTitle,
+        body: newNoteBody,
+        tags: parseTagsRaw(newNoteTagsRaw),
+        favorite: newNoteFavorite
+      })
       newNoteTitle = ''
       newNoteBody = ''
+      newNoteTagsRaw = ''
+      newNoteFavorite = false
       await refreshItems()
       const created = items.find((item) => item.id === id)
       if (created) {
@@ -534,7 +696,13 @@
     noteEditBusy = true
     noteEditError = ''
     try {
-      await window.npw.noteUpdate({ id, title: noteEditTitle, body: noteEditBody })
+      await window.npw.noteUpdate({
+        id,
+        title: noteEditTitle,
+        body: noteEditBody,
+        tags: parseTagsRaw(noteEditTagsRaw),
+        favorite: noteEditFavorite
+      })
       await refreshItems()
       const refreshed = items.find((item) => item.id === id)
       if (refreshed) {
@@ -555,16 +723,20 @@
     try {
       const id = await window.npw.loginAdd({
         title: newLoginTitle,
-        url: newLoginUrl.length > 0 ? newLoginUrl : null,
+        urls: normalizeUrlInputs(newLoginUrls),
         username: newLoginUsername.length > 0 ? newLoginUsername : null,
         password: newLoginPassword,
-        notes: newLoginNotes
+        notes: newLoginNotes,
+        tags: parseTagsRaw(newLoginTagsRaw),
+        favorite: newLoginFavorite
       })
       newLoginTitle = ''
-      newLoginUrl = ''
+      newLoginUrls = [{ url: '', matchType: 'exact' }]
       newLoginUsername = ''
       newLoginPassword = ''
       newLoginNotes = ''
+      newLoginTagsRaw = ''
+      newLoginFavorite = false
       await refreshItems()
       const created = items.find((item) => item.id === id)
       if (created) {
@@ -591,9 +763,11 @@
       await window.npw.loginUpdate({
         id,
         title: loginEditTitle,
-        url: loginEditUrl.trim().length > 0 ? loginEditUrl : null,
+        urls: normalizeUrlInputs(loginEditUrls),
         username: loginEditUsername.trim().length > 0 ? loginEditUsername : null,
-        notes: loginEditNotes.length > 0 ? loginEditNotes : null
+        notes: loginEditNotes.length > 0 ? loginEditNotes : null,
+        tags: parseTagsRaw(loginEditTagsRaw),
+        favorite: loginEditFavorite
       })
       await refreshItems()
       const refreshed = items.find((item) => item.id === id)
@@ -623,7 +797,9 @@
       await window.npw.passkeyRefUpdate({
         id,
         title: passkeyEditTitle,
-        notes: passkeyEditNotes.length > 0 ? passkeyEditNotes : null
+        notes: passkeyEditNotes.length > 0 ? passkeyEditNotes : null,
+        tags: parseTagsRaw(passkeyEditTagsRaw),
+        favorite: passkeyEditFavorite
       })
       await refreshItems()
       const refreshed = items.find((item) => item.id === id)
@@ -638,6 +814,44 @@
       pushToast({ kind: 'error', title: 'Update passkey failed', detail: passkeyEditError })
     } finally {
       passkeyEditBusy = false
+    }
+  }
+
+  const addPasskeyRef = async () => {
+    newPasskeyBusy = true
+    newPasskeyError = ''
+    try {
+      const id = await window.npw.passkeyRefAdd({
+        title: newPasskeyTitle,
+        rpId: newPasskeyRpId,
+        rpName: newPasskeyRpName.trim().length > 0 ? newPasskeyRpName : null,
+        userDisplayName: newPasskeyUserDisplayName.trim().length > 0 ? newPasskeyUserDisplayName : null,
+        credentialIdHex: newPasskeyCredentialIdHex,
+        notes: newPasskeyNotes.trim().length > 0 ? newPasskeyNotes : null,
+        tags: parseTagsRaw(newPasskeyTagsRaw),
+        favorite: newPasskeyFavorite
+      })
+      newPasskeyTitle = ''
+      newPasskeyRpId = ''
+      newPasskeyRpName = ''
+      newPasskeyUserDisplayName = ''
+      newPasskeyCredentialIdHex = ''
+      newPasskeyNotes = ''
+      newPasskeyTagsRaw = ''
+      newPasskeyFavorite = false
+      await refreshItems()
+      const created = items.find((item) => item.id === id)
+      if (created) {
+        await selectItem(created)
+      }
+      lastResult = `Created passkey reference ${id}`
+      pushToast({ kind: 'success', title: 'Created passkey reference', timeoutMs: 3500 })
+    } catch (error) {
+      newPasskeyError = formatError(error)
+      lastResult = newPasskeyError
+      pushToast({ kind: 'error', title: 'Create passkey failed', detail: newPasskeyError })
+    } finally {
+      newPasskeyBusy = false
     }
   }
 
@@ -656,6 +870,7 @@
       selectedItem = null
       loginDetail = null
       noteDetail = null
+      passkeyDetail = null
       totp = null
       clearTotpInterval()
       await refreshItems()
@@ -686,9 +901,11 @@
       if (item.itemType === 'login') {
         loginDetail = await window.npw.loginGet({ id: itemId })
         loginEditTitle = loginDetail.title
-        loginEditUrl = loginDetail.urls[0] ?? ''
+        loginEditUrls = ensureUrlEditorRows(loginDetail.urls)
         loginEditUsername = loginDetail.username ?? ''
         loginEditNotes = loginDetail.notes ?? ''
+        loginEditTagsRaw = formatTagsRaw(loginDetail.tags)
+        loginEditFavorite = !!loginDetail.favorite
         loginEditError = ''
         loginEditBusy = false
         lastResult = `Loaded item ${itemId}`
@@ -718,6 +935,8 @@
         noteDetail = await window.npw.noteGet({ id: itemId })
         noteEditTitle = noteDetail.title
         noteEditBody = noteDetail.body
+        noteEditTagsRaw = formatTagsRaw(noteDetail.tags)
+        noteEditFavorite = !!noteDetail.favorite
         noteEditError = ''
         noteEditBusy = false
         lastResult = `Loaded item ${itemId}`
@@ -728,6 +947,8 @@
         passkeyDetail = await window.npw.passkeyRefGet({ id: itemId })
         passkeyEditTitle = passkeyDetail.title
         passkeyEditNotes = passkeyDetail.notes ?? ''
+        passkeyEditTagsRaw = formatTagsRaw(passkeyDetail.tags)
+        passkeyEditFavorite = !!passkeyDetail.favorite
         passkeyEditError = ''
         passkeyEditBusy = false
         lastResult = `Loaded item ${itemId}`
@@ -1235,10 +1456,41 @@
         Title
         <input bind:value={newLoginTitle} />
       </label>
-      <label>
-        URL
-        <input bind:value={newLoginUrl} />
-      </label>
+      <div class="field">
+        <div class="label">URLs</div>
+        <div class="url-editor">
+          {#each newLoginUrls as entry, index (index)}
+            <div class="inline">
+              <select bind:value={entry.matchType}>
+                <option value="exact">Exact</option>
+                <option value="domain">Domain</option>
+                <option value="subdomain">Subdomain</option>
+              </select>
+              <input bind:value={entry.url} placeholder="https://example.com" />
+              <button
+                class="secondary"
+                type="button"
+                disabled={newLoginUrls.length === 1}
+                on:click={() => {
+                  const next = newLoginUrls.filter((_entry, i) => i !== index)
+                  newLoginUrls = next.length > 0 ? next : [{ url: '', matchType: 'exact' }]
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          {/each}
+          <div class="actions">
+            <button
+              class="secondary"
+              type="button"
+              on:click={() => (newLoginUrls = [...newLoginUrls, { url: '', matchType: 'exact' }])}
+            >
+              Add URL
+            </button>
+          </div>
+        </div>
+      </div>
       <label>
         Username
         <input bind:value={newLoginUsername} />
@@ -1250,6 +1502,14 @@
       <label>
         Notes
         <textarea bind:value={newLoginNotes} rows="4"></textarea>
+      </label>
+      <label>
+        Tags (semicolon separated)
+        <input bind:value={newLoginTagsRaw} placeholder="work; personal" />
+      </label>
+      <label class="inline">
+        <input type="checkbox" bind:checked={newLoginFavorite} />
+        Favorite
       </label>
       <div class="actions">
         <button on:click={addLogin} disabled={newLoginTitle.trim().length === 0}>Save Login</button>
@@ -1268,8 +1528,71 @@
         Body
         <textarea bind:value={newNoteBody} rows="4"></textarea>
       </label>
+      <label>
+        Tags (semicolon separated)
+        <input bind:value={newNoteTagsRaw} placeholder="work; personal" />
+      </label>
+      <label class="inline">
+        <input type="checkbox" bind:checked={newNoteFavorite} />
+        Favorite
+      </label>
       <div class="actions">
         <button on:click={addNote} disabled={newNoteTitle.trim().length === 0}>Save Note</button>
+      </div>
+    </section>
+  {/if}
+
+  {#if status}
+    <section class="add-passkey">
+      <h2>Add Passkey Reference</h2>
+      <p class="muted">This is a reference entry only. npw does not store passkeys.</p>
+      <label>
+        Title
+        <input bind:value={newPasskeyTitle} disabled={newPasskeyBusy} />
+      </label>
+      <label>
+        Relying Party ID
+        <input bind:value={newPasskeyRpId} placeholder="github.com" disabled={newPasskeyBusy} />
+      </label>
+      <label>
+        Relying Party Name (optional)
+        <input bind:value={newPasskeyRpName} disabled={newPasskeyBusy} />
+      </label>
+      <label>
+        User Display Name (optional)
+        <input bind:value={newPasskeyUserDisplayName} disabled={newPasskeyBusy} />
+      </label>
+      <label>
+        Credential ID (hex)
+        <input bind:value={newPasskeyCredentialIdHex} placeholder="0123abcd..." disabled={newPasskeyBusy} />
+      </label>
+      <label>
+        Notes
+        <textarea bind:value={newPasskeyNotes} rows="4" disabled={newPasskeyBusy}></textarea>
+      </label>
+      <label>
+        Tags (semicolon separated)
+        <input bind:value={newPasskeyTagsRaw} placeholder="work; personal" disabled={newPasskeyBusy} />
+      </label>
+      <label class="inline">
+        <input type="checkbox" bind:checked={newPasskeyFavorite} disabled={newPasskeyBusy} />
+        Favorite
+      </label>
+      {#if newPasskeyError}
+        <p class="callout">{newPasskeyError}</p>
+      {/if}
+      <div class="actions">
+        <button
+          on:click={addPasskeyRef}
+          disabled={
+            newPasskeyBusy ||
+            newPasskeyTitle.trim().length === 0 ||
+            newPasskeyRpId.trim().length === 0 ||
+            newPasskeyCredentialIdHex.trim().length === 0
+          }
+        >
+          {newPasskeyBusy ? 'Saving…' : 'Save Passkey Reference'}
+        </button>
       </div>
     </section>
   {/if}
@@ -1287,21 +1610,52 @@
   {#if status}
     <section class="items">
       <h2>Items</h2>
-      {#if items.length === 0}
+      <div class="filters">
+        <label>
+          Type
+          <select bind:value={filterType}>
+            <option value="all">All</option>
+            <option value="login">Logins</option>
+            <option value="note">Notes</option>
+            <option value="passkey_ref">Passkey refs</option>
+          </select>
+        </label>
+        <label class="inline">
+          <input type="checkbox" bind:checked={filterFavoritesOnly} />
+          Favorites only
+        </label>
+        <label>
+          Tag
+          <input bind:value={filterTag} list="tag-suggestions" placeholder="work" />
+        </label>
+        <datalist id="tag-suggestions">
+          {#each availableTags as tag (tag)}
+            <option value={tag}></option>
+          {/each}
+        </datalist>
+      </div>
+
+      {#if itemsView.length === 0}
         <p class="muted">No items found.</p>
       {:else}
         <ul class="item-list">
-          {#each items as item (item.id)}
+          {#each itemsView as item (item.id)}
             <li class:selected={selectedItem?.id === item.id}>
               <button class="row" type="button" on:click={() => selectItem(item)}>
                 <strong>{item.title}</strong>
                 <span class="meta">
                   {item.itemType}
+                  {#if item.favorite}
+                    · ★
+                  {/if}
                   {#if item.subtitle}
                     · {item.subtitle}
                   {/if}
                   {#if item.url}
                     · {item.url}
+                  {/if}
+                  {#if item.tags && item.tags.length > 0}
+                    · {item.tags.slice(0, 3).join(', ')}
                   {/if}
                   {#if item.hasTotp}
                     · TOTP
@@ -1387,14 +1741,56 @@
         {/if}
       </div>
 
-      <label>
-        URL
-        <input bind:value={loginEditUrl} disabled={loginEditBusy} />
-      </label>
+      <div class="field">
+        <div class="label">URLs</div>
+        <div class="url-editor">
+          {#each loginEditUrls as entry, index (index)}
+            <div class="inline">
+              <select bind:value={entry.matchType} disabled={loginEditBusy}>
+                <option value="exact">Exact</option>
+                <option value="domain">Domain</option>
+                <option value="subdomain">Subdomain</option>
+              </select>
+              <input bind:value={entry.url} placeholder="https://example.com" disabled={loginEditBusy} />
+              <button
+                class="secondary"
+                type="button"
+                disabled={loginEditBusy || loginEditUrls.length === 1}
+                on:click={() => {
+                  const next = loginEditUrls.filter((_entry, i) => i !== index)
+                  loginEditUrls = next.length > 0 ? next : [{ url: '', matchType: 'exact' }]
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          {/each}
+          <div class="actions">
+            <button
+              class="secondary"
+              type="button"
+              disabled={loginEditBusy}
+              on:click={() => (loginEditUrls = [...loginEditUrls, { url: '', matchType: 'exact' }])}
+            >
+              Add URL
+            </button>
+          </div>
+        </div>
+      </div>
 
       <label>
         Notes
         <textarea bind:value={loginEditNotes} rows="6" disabled={loginEditBusy}></textarea>
+      </label>
+
+      <label>
+        Tags (semicolon separated)
+        <input bind:value={loginEditTagsRaw} placeholder="work; personal" disabled={loginEditBusy} />
+      </label>
+
+      <label class="inline">
+        <input type="checkbox" bind:checked={loginEditFavorite} disabled={loginEditBusy} />
+        Favorite
       </label>
 
       {#if loginEditError}
@@ -1422,6 +1818,16 @@
       <label>
         Body
         <textarea bind:value={noteEditBody} rows="10" disabled={noteEditBusy}></textarea>
+      </label>
+
+      <label>
+        Tags (semicolon separated)
+        <input bind:value={noteEditTagsRaw} placeholder="work; personal" disabled={noteEditBusy} />
+      </label>
+
+      <label class="inline">
+        <input type="checkbox" bind:checked={noteEditFavorite} disabled={noteEditBusy} />
+        Favorite
       </label>
 
       {#if noteEditError}
@@ -1480,6 +1886,16 @@
       <label>
         Notes
         <textarea bind:value={passkeyEditNotes} rows="6" disabled={passkeyEditBusy}></textarea>
+      </label>
+
+      <label>
+        Tags (semicolon separated)
+        <input bind:value={passkeyEditTagsRaw} placeholder="work; personal" disabled={passkeyEditBusy} />
+      </label>
+
+      <label class="inline">
+        <input type="checkbox" bind:checked={passkeyEditFavorite} disabled={passkeyEditBusy} />
+        Favorite
       </label>
 
       {#if passkeyEditError}

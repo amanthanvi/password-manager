@@ -89,10 +89,15 @@ type ItemSummary = {
   tags: string[]
 }
 
+type UrlEntry = {
+  url: string
+  matchType: 'exact' | 'domain' | 'subdomain'
+}
+
 type LoginDetail = {
   id: string
   title: string
-  urls: string[]
+  urls: UrlEntry[]
   username: string | null
   hasPassword: boolean
   hasTotp: boolean
@@ -144,26 +149,63 @@ type VaultRecoveryResult = {
   corruptPath: string | null
 }
 
+type UrlEntryInput = {
+  url: string
+  matchType?: string | null
+}
+
 type AddLoginInput = {
   title: string
-  url?: string | null
+  urls?: UrlEntryInput[] | null
   username?: string | null
   password?: string | null
   notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
 }
 
 type UpdateLoginInput = {
   id: string
   title: string
-  url?: string | null
+  urls?: UrlEntryInput[] | null
   username?: string | null
   notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type AddNoteInput = {
+  title: string
+  body: string
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type UpdateNoteInput = {
+  id: string
+  title: string
+  body: string
+  tags?: string[] | null
+  favorite?: boolean | null
+}
+
+type AddPasskeyRefInput = {
+  title: string
+  rpId: string
+  rpName?: string | null
+  userDisplayName?: string | null
+  credentialIdHex: string
+  notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
 }
 
 type UpdatePasskeyRefInput = {
   id: string
   title: string
   notes?: string | null
+  tags?: string[] | null
+  favorite?: boolean | null
 }
 
 type VaultSession = {
@@ -180,9 +222,10 @@ type VaultSession = {
   getNote: (id: string) => NoteDetail
   getPasskeyRef: (id: string) => PasskeyRefDetail
   updatePasskeyRef: (input: UpdatePasskeyRefInput) => boolean
-  addNote: (title: string, body: string) => string
-  updateNote: (id: string, title: string, body: string) => boolean
+  addNote: (input: AddNoteInput) => string
+  updateNote: (input: UpdateNoteInput) => boolean
   addLogin: (input: AddLoginInput) => string
+  addPasskeyRef: (input: AddPasskeyRefInput) => string
   deleteItem: (id: string) => boolean
 }
 
@@ -423,11 +466,53 @@ function registerIpcHandlers(api: AddonApi) {
     if (typeof notes === 'string' && notes.length > 100_000) {
       throw new Error('notes is too long')
     }
+    const tags = payload.tags != null ? validateTags(payload.tags, 'tags') : undefined
+    const favorite = payload.favorite != null ? validateOptionalBool(payload.favorite, 'favorite') : undefined
 
     return session.updatePasskeyRef({
       id: safeId,
       title: safeTitle,
-      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined,
+      tags,
+      favorite
+    })
+  })
+
+  ipcMain.handle('item.passkey.add', (_event, payload: AddPasskeyRefInput) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeTitle = validateText(payload.title, 'title', 256)
+    const safeRpId = validateText(payload.rpId, 'rpId', 256)
+    const safeCredentialIdHex = validateText(payload.credentialIdHex, 'credentialIdHex', 4096)
+    if (!/^[0-9a-fA-F]+$/.test(safeCredentialIdHex)) {
+      throw new Error('credentialIdHex must be hex')
+    }
+    if (safeCredentialIdHex.length % 2 !== 0) {
+      throw new Error('credentialIdHex must have even length')
+    }
+    const safeRpName = payload.rpName != null ? validateOptionalText(payload.rpName, 'rpName', 256) : undefined
+    const safeUser =
+      payload.userDisplayName != null ? validateOptionalText(payload.userDisplayName, 'userDisplayName', 256) : undefined
+    const notes = payload.notes
+    if (notes != null && typeof notes !== 'string') {
+      throw new Error('notes must be a string')
+    }
+    if (typeof notes === 'string' && notes.length > 100_000) {
+      throw new Error('notes is too long')
+    }
+    const tags = payload.tags != null ? validateTags(payload.tags, 'tags') : undefined
+    const favorite = payload.favorite != null ? validateOptionalBool(payload.favorite, 'favorite') : undefined
+
+    return session.addPasskeyRef({
+      title: safeTitle,
+      rpId: safeRpId,
+      rpName: safeRpName && safeRpName.length > 0 ? safeRpName : undefined,
+      userDisplayName: safeUser && safeUser.length > 0 ? safeUser : undefined,
+      credentialIdHex: safeCredentialIdHex,
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined,
+      tags,
+      favorite
     })
   })
 
@@ -451,7 +536,7 @@ function registerIpcHandlers(api: AddonApi) {
     return true
   })
 
-  ipcMain.handle('item.note.add', (_event, payload: { title: string; body: string }) => {
+  ipcMain.handle('item.note.add', (_event, payload: AddNoteInput) => {
     if (!session) {
       throw new Error('vault is locked')
     }
@@ -462,10 +547,17 @@ function registerIpcHandlers(api: AddonApi) {
     if (payload.body.length > 1_000_000) {
       throw new Error('body is too long')
     }
-    return session.addNote(safeTitle, payload.body)
+    const tags = payload.tags != null ? validateTags(payload.tags, 'tags') : undefined
+    const favorite = payload.favorite != null ? validateOptionalBool(payload.favorite, 'favorite') : undefined
+    return session.addNote({
+      title: safeTitle,
+      body: payload.body,
+      tags,
+      favorite
+    })
   })
 
-  ipcMain.handle('item.note.update', (_event, payload: { id: string; title: string; body: string }) => {
+  ipcMain.handle('item.note.update', (_event, payload: UpdateNoteInput) => {
     if (!session) {
       throw new Error('vault is locked')
     }
@@ -477,7 +569,15 @@ function registerIpcHandlers(api: AddonApi) {
     if (payload.body.length > 1_000_000) {
       throw new Error('body is too long')
     }
-    return session.updateNote(safeId, safeTitle, payload.body)
+    const tags = payload.tags != null ? validateTags(payload.tags, 'tags') : undefined
+    const favorite = payload.favorite != null ? validateOptionalBool(payload.favorite, 'favorite') : undefined
+    return session.updateNote({
+      id: safeId,
+      title: safeTitle,
+      body: payload.body,
+      tags,
+      favorite
+    })
   })
 
   ipcMain.handle('item.login.add', (_event, payload: AddLoginInput) => {
@@ -485,8 +585,10 @@ function registerIpcHandlers(api: AddonApi) {
       throw new Error('vault is locked')
     }
     const safeTitle = validateText(payload.title, 'title', 256)
-    const safeUrl = payload.url ? validateOptionalText(payload.url, 'url', 2048) : undefined
     const safeUsername = payload.username ? validateOptionalText(payload.username, 'username', 256) : undefined
+    const urls = payload.urls != null ? validateUrlEntries(payload.urls, 'urls') : undefined
+    const tags = payload.tags != null ? validateTags(payload.tags, 'tags') : undefined
+    const favorite = payload.favorite != null ? validateOptionalBool(payload.favorite, 'favorite') : undefined
 
     const password = payload.password
     if (password != null && typeof password !== 'string') {
@@ -506,10 +608,12 @@ function registerIpcHandlers(api: AddonApi) {
 
     return session.addLogin({
       title: safeTitle,
-      url: safeUrl && safeUrl.length > 0 ? safeUrl : undefined,
+      urls,
       username: safeUsername && safeUsername.length > 0 ? safeUsername : undefined,
       password: typeof password === 'string' && password.length > 0 ? password : undefined,
-      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined,
+      tags,
+      favorite
     })
   })
 
@@ -519,8 +623,10 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     const safeTitle = validateText(payload.title, 'title', 256)
-    const safeUrl = payload.url ? validateOptionalText(payload.url, 'url', 2048) : undefined
     const safeUsername = payload.username ? validateOptionalText(payload.username, 'username', 256) : undefined
+    const urls = payload.urls != null ? validateUrlEntries(payload.urls, 'urls') : undefined
+    const tags = payload.tags != null ? validateTags(payload.tags, 'tags') : undefined
+    const favorite = payload.favorite != null ? validateOptionalBool(payload.favorite, 'favorite') : undefined
 
     const notes = payload.notes
     if (notes != null && typeof notes !== 'string') {
@@ -533,9 +639,11 @@ function registerIpcHandlers(api: AddonApi) {
     return session.updateLogin({
       id: safeId,
       title: safeTitle,
-      url: safeUrl && safeUrl.length > 0 ? safeUrl : undefined,
+      urls,
       username: safeUsername && safeUsername.length > 0 ? safeUsername : undefined,
-      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined,
+      tags,
+      favorite
     })
   })
 
@@ -753,6 +861,80 @@ function validateOptionalText(value: string, field: string, maxLen: number): str
     throw new Error(`${field} is too long`)
   }
   return trimmed
+}
+
+function validateOptionalBool(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new Error(`${field} must be a boolean`)
+  }
+  return value
+}
+
+function validateTags(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`)
+  }
+  const tags: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      throw new Error(`${field} entries must be strings`)
+    }
+    const trimmed = entry.trim()
+    if (trimmed.length === 0) {
+      continue
+    }
+    if (trimmed.length > 64) {
+      throw new Error(`${field} entry is too long`)
+    }
+    tags.push(trimmed)
+  }
+  return tags
+}
+
+function validateUrlEntries(value: unknown, field: string): UrlEntryInput[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`)
+  }
+  const urls: UrlEntryInput[] = []
+  for (const [index, entry] of value.entries()) {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`${field}[${index}] must be an object`)
+    }
+    const candidate = entry as Partial<UrlEntryInput>
+    if (typeof candidate.url !== 'string') {
+      throw new Error(`${field}[${index}].url must be a string`)
+    }
+    const urlTrimmed = candidate.url.trim()
+    if (urlTrimmed.length === 0) {
+      continue
+    }
+    if (urlTrimmed.length > 2048) {
+      throw new Error(`${field}[${index}].url is too long`)
+    }
+    try {
+      new URL(urlTrimmed)
+    } catch {
+      throw new Error(`${field}[${index}].url must be a valid URL`)
+    }
+
+    let matchType: string | undefined = undefined
+    if (candidate.matchType != null) {
+      if (typeof candidate.matchType !== 'string') {
+        throw new Error(`${field}[${index}].matchType must be a string`)
+      }
+      const trimmed = candidate.matchType.trim().toLowerCase()
+      if (trimmed.length === 0) {
+        matchType = undefined
+      } else if (trimmed === 'exact' || trimmed === 'domain' || trimmed === 'subdomain') {
+        matchType = trimmed
+      } else {
+        throw new Error(`${field}[${index}].matchType must be exact|domain|subdomain`)
+      }
+    }
+
+    urls.push({ url: urlTrimmed, matchType })
+  }
+  return urls
 }
 
 function sha256Base64(token: Buffer, value: string): string {

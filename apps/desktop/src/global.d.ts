@@ -14,6 +14,30 @@ declare global {
     lastOpenedAt: number
   }
 
+  interface AppConfig {
+    configPath: string
+    defaultVault: string | null
+    security: {
+      clipboardTimeoutSeconds: number
+      autoLockMinutes: number
+      lockOnSuspend: boolean
+      revealRequiresConfirm: boolean
+    }
+    generator: {
+      defaultMode: string
+      charsetLength: number
+      charsetUppercase: boolean
+      charsetLowercase: boolean
+      charsetDigits: boolean
+      charsetSymbols: boolean
+      charsetAvoidAmbiguous: boolean
+      dicewareWords: number
+      dicewareSeparator: string
+    }
+    logging: { level: string }
+    backup: { maxRetained: number }
+  }
+
   interface ItemSummary {
     id: string
     itemType: string
@@ -26,10 +50,15 @@ declare global {
     tags: string[]
   }
 
+  interface UrlEntry {
+    url: string
+    matchType: 'exact' | 'domain' | 'subdomain'
+  }
+
   interface LoginDetail {
     id: string
     title: string
-    urls: string[]
+    urls: UrlEntry[]
     username: string | null
     hasPassword: boolean
     hasTotp: boolean
@@ -82,27 +111,57 @@ declare global {
       vaultCreate: (payload: { path: string; masterPassword: string; label?: string }) => Promise<boolean>
       vaultStatus: (payload: { path: string }) => Promise<VaultStatus>
       vaultCheck: (payload: { path: string; masterPassword: string }) => Promise<VaultStatus>
+      vaultBackupsList: (payload: { path: string }) => Promise<{ path: string; timestamp: number; itemCount: number; label: string }[]>
+      vaultRecoverFromBackup: (payload: { path: string; backupPath: string }) => Promise<{ corruptPath: string | null }>
       vaultUnlock: (payload: { path: string; masterPassword: string }) => Promise<VaultStatus>
       vaultLock: () => Promise<boolean>
+      configLoad: () => Promise<AppConfig>
+      configSet: (payload: { key: string; value: string }) => Promise<AppConfig>
       itemList: (payload: { query?: string | null }) => Promise<ItemSummary[]>
       loginGet: (payload: { id: string }) => Promise<LoginDetail>
       noteGet: (payload: { id: string }) => Promise<NoteDetail>
       passkeyRefGet: (payload: { id: string }) => Promise<PasskeyRefDetail>
       passkeyOpenSite: (payload: { id: string }) => Promise<boolean>
       passkeyOpenManager: () => Promise<boolean>
-      noteAdd: (payload: { title: string; body: string }) => Promise<string>
+      passkeyRefAdd: (payload: {
+        title: string
+        rpId: string
+        rpName?: string | null
+        userDisplayName?: string | null
+        credentialIdHex: string
+        notes?: string | null
+        tags?: string[] | null
+        favorite?: boolean | null
+      }) => Promise<string>
+      passkeyRefUpdate: (payload: { id: string; title: string; notes?: string | null; tags?: string[] | null; favorite?: boolean | null }) => Promise<boolean>
+      noteAdd: (payload: { title: string; body: string; tags?: string[] | null; favorite?: boolean | null }) => Promise<string>
+      noteUpdate: (payload: { id: string; title: string; body: string; tags?: string[] | null; favorite?: boolean | null }) => Promise<boolean>
       loginAdd: (payload: {
         title: string
-        url?: string | null
+        urls?: { url: string; matchType?: string | null }[] | null
         username?: string | null
         password?: string | null
         notes?: string | null
+        tags?: string[] | null
+        favorite?: boolean | null
       }) => Promise<string>
+      loginUpdate: (payload: {
+        id: string
+        title: string
+        urls?: { url: string; matchType?: string | null }[] | null
+        username?: string | null
+        notes?: string | null
+        tags?: string[] | null
+        favorite?: boolean | null
+      }) => Promise<boolean>
       itemDelete: (payload: { id: string }) => Promise<boolean>
       loginCopyUsername: (payload: { id: string }) => Promise<boolean>
       loginCopyPassword: (payload: { id: string }) => Promise<boolean>
+      loginRevealPassword: (payload: { id: string }) => Promise<string>
+      loginGenerateReplacePassword: (payload: { id: string }) => Promise<string>
       loginTotpGet: (payload: { id: string }) => Promise<TotpCode>
       loginTotpQrSvg: (payload: { id: string }) => Promise<string>
+      loginTotpSet: (payload: { id: string; value: string }) => Promise<boolean>
       loginCopyTotp: (payload: { id: string }) => Promise<boolean>
     }
   }
