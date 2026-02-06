@@ -79,6 +79,7 @@ declare global {
         password?: string | null
         notes?: string | null
       }) => Promise<string>
+      itemDelete: (payload: { id: string }) => Promise<boolean>
       loginCopyUsername: (payload: { id: string }) => Promise<boolean>
       loginCopyPassword: (payload: { id: string }) => Promise<boolean>
       loginTotpGet: (payload: { id: string }) => Promise<TotpCode>

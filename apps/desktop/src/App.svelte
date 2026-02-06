@@ -193,6 +193,30 @@
     }
   }
 
+  const deleteSelectedItem = async () => {
+    if (!selectedItem) {
+      return
+    }
+    const confirmed = confirm(`Delete "${selectedItem.title}"?`)
+    if (!confirmed) {
+      return
+    }
+
+    const id = selectedItem.id
+    try {
+      const deleted = await window.npw.itemDelete({ id })
+      selectedItem = null
+      loginDetail = null
+      noteDetail = null
+      totp = null
+      clearTotpInterval()
+      await refreshItems()
+      lastResult = deleted ? `Deleted item ${id}` : `Item not found: ${id}`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
   const selectItem = async (item) => {
     selectedItem = item
     loginDetail = null
@@ -443,6 +467,9 @@
     <section class="detail">
       <h2>Login</h2>
       <p class="muted">{loginDetail.id}</p>
+      <div class="actions">
+        <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
+      </div>
 
       <div class="field">
         <div class="label">Title</div>
@@ -506,6 +533,9 @@
     <section class="detail">
       <h2>Note</h2>
       <p class="muted">{noteDetail.id}</p>
+      <div class="actions">
+        <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
+      </div>
 
       <div class="field">
         <div class="label">Title</div>

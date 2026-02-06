@@ -345,6 +345,17 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn delete_item(&mut self, id: String) -> Result<bool> {
+        let now = unix_seconds_now();
+        let deleted = self.payload.soft_delete_item(&id, now);
+        if deleted {
+            self.persist()
+                .map_err(|error| error_to_napi(error.to_string()))?;
+        }
+        Ok(deleted)
+    }
+
+    #[napi]
     pub fn lock(&mut self) {
         self.payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now());
         self.unlocked.payload_plaintext.zeroize();

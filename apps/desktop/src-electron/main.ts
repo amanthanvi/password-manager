@@ -87,6 +87,7 @@ type VaultSession = {
   getNote: (id: string) => NoteDetail
   addNote: (title: string, body: string) => string
   addLogin: (input: AddLoginInput) => string
+  deleteItem: (id: string) => boolean
 }
 
 type AddonApi = {
@@ -277,6 +278,14 @@ function registerIpcHandlers(api: AddonApi) {
       password: typeof password === 'string' && password.length > 0 ? password : undefined,
       notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
     })
+  })
+
+  ipcMain.handle('item.delete', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.deleteItem(safeId)
   })
 
   ipcMain.handle('item.login.copy-username', (_event, payload: { id: string }) => {
