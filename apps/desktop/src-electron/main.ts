@@ -453,6 +453,14 @@ function registerIpcHandlers(api: AddonApi) {
     return true
   })
 
+  ipcMain.handle('item.login.reveal-password', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.getLoginPassword(safeId)
+  })
+
   ipcMain.handle('item.login.totp.get', (_event, payload: { id: string }) => {
     if (!session) {
       throw new Error('vault is locked')
