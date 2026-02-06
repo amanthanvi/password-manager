@@ -99,4 +99,5 @@ These become authoritative once scaffolded in Step 1:
 ## 5. Execution Log
 - [x] Plan approved by user (`pnpm` selected; dependency additions pre-approved).
 - [x] M1 complete: monorepo scaffolded (Rust workspace, Electron+Svelte app, root scripts, CI skeleton, Golden Commands operational).
-- [ ] M2 in progress.
+- [x] M2 complete: NPW1 core parser/writer and crypto pipeline implemented (Argon2id, HKDF-SHA256, XChaCha20-Poly1305, AAD binding) with roundtrip/tamper/KDF-bound tests.
+- [ ] M3 in progress.

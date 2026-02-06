@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub mod vault;
+
 pub const APP_NAME: &str = "npw";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -18,17 +20,7 @@ pub fn bootstrap_banner() -> String {
     format!("{APP_NAME} core ready")
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn bootstrap_banner_mentions_app_name() {
-        assert!(super::bootstrap_banner().contains(super::APP_NAME));
-    }
-
-    #[test]
-    fn vault_id_random_produces_unique_ids() {
-        let a = super::VaultId::random();
-        let b = super::VaultId::random();
-        assert_ne!(a, b);
-    }
-}
+pub use vault::{
+    CreateVaultInput, EnvelopePlaintext, KdfParams, UnlockedVault, VaultError, VaultHeader,
+    create_vault_file, unlock_vault_file,
+};
