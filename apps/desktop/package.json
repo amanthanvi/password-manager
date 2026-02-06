@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "typecheck": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run",
+    "e2e": "playwright test",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "eslint": "^9.39.1",
     "eslint-plugin-svelte": "^3.13.0",
     "globals": "^16.5.0",
+    "playwright": "^1.58.1",
     "svelte": "^5.43.8",
     "svelte-check": "^4.3.4",
     "typescript": "~5.9.3",
