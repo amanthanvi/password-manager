@@ -5,8 +5,9 @@ use data_encoding::BASE32_NOPAD;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
-    CreateVaultInput, KdfParams, LoginItem, NoteItem, UrlEntry, UrlMatchType, VaultItem,
-    VaultPayload, assess_master_password, create_vault_file, generate_totp, parse_vault_header,
+    CreateVaultInput, KdfParams, LoginItem, NoteItem, TotpAlgorithm, TotpConfig, UrlEntry,
+    UrlMatchType, VaultItem, VaultPayload, assess_master_password, create_vault_file,
+    decode_base32_secret, generate_totp, parse_otpauth_uri, parse_vault_header,
     reencrypt_vault_file_with_kek, unlock_vault_file, unlock_vault_file_with_kek,
 };
 use npw_storage::{
@@ -476,6 +477,50 @@ impl VaultSession {
             .render::<qrcode::render::svg::Color>()
             .min_dimensions(256, 256)
             .build())
+    }
+
+    #[napi]
+    pub fn set_login_totp(&mut self, id: String, value: String) -> Result<bool> {
+        let now = unix_seconds_now();
+        let index = self
+            .payload
+            .items
+            .iter()
+            .position(|item| item.id() == id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+
+        let VaultItem::Login(login) = &mut self.payload.items[index] else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(error_to_napi("TOTP value is empty".to_owned()));
+        }
+
+        let config = if trimmed.starts_with("otpauth://") {
+            parse_otpauth_uri(trimmed).map_err(|error| error_to_napi(error.to_string()))?
+        } else {
+            TotpConfig {
+                seed: decode_base32_secret(trimmed)
+                    .map_err(|error| error_to_napi(error.to_string()))?,
+                issuer: None,
+                algorithm: TotpAlgorithm::SHA1,
+                digits: 6,
+                period: 30,
+            }
+        };
+
+        login.totp = Some(config);
+        login.updated_at = now;
+        login
+            .validate()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.payload.updated_at = now;
+        self.payload.rebuild_search_index();
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(true)
     }
 
     #[napi]

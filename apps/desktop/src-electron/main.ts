@@ -161,6 +161,7 @@ type VaultSession = {
   loginGenerateAndReplacePassword: (id: string) => string
   getLoginTotp: (id: string) => TotpCode
   getLoginTotpQrSvg: (id: string) => string
+  setLoginTotp: (id: string, value: string) => boolean
   getNote: (id: string) => NoteDetail
   getPasskeyRef: (id: string) => PasskeyRefDetail
   addNote: (title: string, body: string) => string
@@ -520,6 +521,15 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     return session.getLoginTotpQrSvg(safeId)
+  })
+
+  ipcMain.handle('item.login.totp.set', (_event, payload: { id: string; value: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const safeValue = validateText(payload.value, 'value', 4096)
+    return session.setLoginTotp(safeId, safeValue)
   })
 
   ipcMain.handle('item.login.copy-totp', (_event, payload: { id: string }) => {
