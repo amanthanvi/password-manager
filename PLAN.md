@@ -1,6 +1,6 @@
 # `npw` v0.1.0 Execution Plan (`PLAN.md`)
 
-Status: Active
+Status: Complete
 Owner: Codex (execution agent)
 Branch: `main`
 Source spec: `SPEC.md`
@@ -132,6 +132,7 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop add/edit supports tags + favorites, multi-URL editing with match types, and passkey reference creation.
 - [x] M9 slice complete: desktop import/export screen with CSV + Bitwarden JSON preview/apply (duplicate resolution) and CSV/JSON/encrypted exports via OS dialogs.
 - [x] M9 slice complete: desktop OS keychain Quick Unlock (opt-in per vault; explicit warning + confirmation; disable deletes keychain entry).
+- [x] M12 complete: final verification (SPEC O2 proptests; `pnpm run check`, `pnpm run build`, `pnpm run audit` all green on `main`).
 
 ## 6. Remaining v0.1.0 Blockers (MUST)
 
