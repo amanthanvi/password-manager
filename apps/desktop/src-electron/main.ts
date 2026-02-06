@@ -84,6 +84,17 @@ type TotpCode = {
   remaining: number
 }
 
+type BackupCandidate = {
+  path: string
+  timestamp: number
+  itemCount: number
+  label: string
+}
+
+type VaultRecoveryResult = {
+  corruptPath: string | null
+}
+
 type AddLoginInput = {
   title: string
   url?: string | null
@@ -113,6 +124,8 @@ type AddonApi = {
   vaultStatus: (path: string) => VaultStatus
   vaultCheck: (path: string, masterPassword: string) => VaultStatus
   vaultUnlock: (path: string, masterPassword: string) => VaultSession
+  vaultListBackups: (path: string) => BackupCandidate[]
+  vaultRecoverFromBackup: (vaultPath: string, backupPath: string) => VaultRecoveryResult
 }
 
 const addon = loadAddon()
@@ -220,6 +233,18 @@ function registerIpcHandlers(api: AddonApi) {
     const safePath = validateText(payload.path, 'path', 4096)
     const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
     return api.vaultCheck(safePath, safePassword)
+  })
+  ipcMain.handle('vault.backups.list', (_event, payload: { path: string }) => {
+    const safePath = validateText(payload.path, 'path', 4096)
+    return api.vaultListBackups(safePath)
+  })
+  ipcMain.handle('vault.backups.recover', (_event, payload: { path: string; backupPath: string }) => {
+    if (session) {
+      throw new Error('vault must be locked before recovery')
+    }
+    const safePath = validateText(payload.path, 'path', 4096)
+    const safeBackupPath = validateText(payload.backupPath, 'backupPath', 4096)
+    return api.vaultRecoverFromBackup(safePath, safeBackupPath)
   })
   ipcMain.handle('vault.unlock', (_event, payload: { path: string; masterPassword: string }) => {
     const safePath = validateText(payload.path, 'path', 4096)

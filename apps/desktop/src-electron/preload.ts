@@ -71,6 +71,17 @@ type TotpCode = {
   remaining: number
 }
 
+type BackupCandidate = {
+  path: string
+  timestamp: number
+  itemCount: number
+  label: string
+}
+
+type VaultRecoveryResult = {
+  corruptPath: string | null
+}
+
 type AddLoginInput = {
   title: string
   url?: string | null
@@ -100,6 +111,9 @@ contextBridge.exposeInMainWorld('npw', {
   vaultStatus: (payload: { path: string }): Promise<VaultStatus> => ipcRenderer.invoke('vault.status', payload),
   vaultCheck: (payload: { path: string; masterPassword: string }): Promise<VaultStatus> =>
     ipcRenderer.invoke('vault.check', payload),
+  vaultBackupsList: (payload: { path: string }): Promise<BackupCandidate[]> => ipcRenderer.invoke('vault.backups.list', payload),
+  vaultRecoverFromBackup: (payload: { path: string; backupPath: string }): Promise<VaultRecoveryResult> =>
+    ipcRenderer.invoke('vault.backups.recover', payload),
   vaultUnlock: (payload: { path: string; masterPassword: string }): Promise<VaultStatus> =>
     ipcRenderer.invoke('vault.unlock', payload),
   vaultLock: (): Promise<boolean> => ipcRenderer.invoke('vault.lock'),
