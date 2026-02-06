@@ -536,6 +536,8 @@ mod tests {
     use super::{
         ItemTypeFilter, LoginItem, NoteItem, UrlEntry, UrlMatchType, VaultItem, VaultPayload,
     };
+    use proptest::prelude::*;
+    use uuid::Uuid;
 
     #[test]
     fn payload_roundtrip_and_search_index() {
@@ -613,5 +615,79 @@ mod tests {
 
         assert_eq!(payload.list_items(Some(ItemTypeFilter::Note)).len(), 1);
         assert_eq!(payload.list_items(Some(ItemTypeFilter::Login)).len(), 0);
+    }
+
+    fn arb_title() -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<u8>(), 1..=16).prop_map(|bytes| {
+            bytes
+                .into_iter()
+                .map(|byte| (b'a' + (byte % 26)) as char)
+                .collect()
+        })
+    }
+
+    fn arb_tag() -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<u8>(), 1..=10).prop_map(|bytes| {
+            bytes
+                .into_iter()
+                .map(|byte| (b'a' + (byte % 26)) as char)
+                .collect()
+        })
+    }
+
+    fn arb_payload_for_search() -> impl Strategy<Value = VaultPayload> {
+        (
+            any::<u128>(),
+            prop::collection::vec((arb_title(), prop::collection::vec(arb_tag(), 0..3)), 0..8),
+        )
+            .prop_map(|(seed, items)| {
+                let now = 1_700_000_000_u64;
+                let mut payload = VaultPayload::new("npw", "0.1.0", now);
+                for (index, (title, tags)) in items.into_iter().enumerate() {
+                    let item = VaultItem::Login(LoginItem {
+                        id: Uuid::from_u128(seed.wrapping_add(index as u128)).to_string(),
+                        title: format!("{title}-{index}"),
+                        urls: vec![UrlEntry {
+                            url: format!("https://example.com/{index}"),
+                            match_type: UrlMatchType::Exact,
+                        }],
+                        username: Some(format!("user{index}@example.com")),
+                        password: None,
+                        totp: None,
+                        notes: None,
+                        tags,
+                        favorite: false,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                    payload
+                        .add_item(item, now)
+                        .expect("generated item should validate");
+                }
+                payload
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn search_finds_items_by_title_prefix(payload in arb_payload_for_search()) {
+            for item in &payload.items {
+                let title = match item {
+                    VaultItem::Login(login) => login.title.as_str(),
+                    VaultItem::Note(note) => note.title.as_str(),
+                    VaultItem::PasskeyRef(passkey) => passkey.title.as_str(),
+                };
+
+                let prefix_len = title.len().min(3);
+                let prefix = &title[..prefix_len];
+                let results = payload.search_items(prefix);
+                prop_assert!(results.iter().any(|candidate| candidate.id() == item.id()));
+            }
+        }
     }
 }

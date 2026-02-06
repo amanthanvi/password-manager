@@ -23,3 +23,6 @@ url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 zxcvbn.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

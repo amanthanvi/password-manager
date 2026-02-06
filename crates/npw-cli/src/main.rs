@@ -1348,6 +1348,57 @@ fn handle_import_csv(
         .flexible(true)
         .from_path(&args.input)
         .map_err(map_csv_error)?;
+    let outcome = import_csv_reader_into_payload(&mut reader, &mut payload, now, args.duplicate)?;
+
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+    audit_event(
+        "import_invoked",
+        json!({
+            "import_type": "csv",
+            "imported": outcome.imported,
+            "skipped": outcome.skipped,
+            "overwritten": outcome.overwritten
+        }),
+    );
+
+    Ok(CommandOutput {
+        message: format!(
+            "Imported {} rows from {} (skipped {}, overwritten {})",
+            outcome.imported,
+            args.input.display(),
+            outcome.skipped,
+            outcome.overwritten
+        ),
+        payload: json!({
+            "path": path,
+            "input": args.input,
+            "imported": outcome.imported,
+            "skipped": outcome.skipped,
+            "overwritten": outcome.overwritten,
+            "warnings": outcome.warnings
+        }),
+    })
+}
+
+struct CsvImportOutcome {
+    imported: u32,
+    skipped: u32,
+    overwritten: u32,
+    warnings: Vec<String>,
+}
+
+fn import_csv_reader_into_payload<R: std::io::Read>(
+    reader: &mut csv::Reader<R>,
+    payload: &mut VaultPayload,
+    now: u64,
+    duplicate_policy: DuplicatePolicyArg,
+) -> Result<CsvImportOutcome, CliError> {
     let headers = reader.headers().map_err(map_csv_error)?.clone();
     let supported_headers = HashSet::from([
         "type", "title", "username", "password", "url", "notes", "tags", "totp_uri",
@@ -1359,7 +1410,7 @@ fn handle_import_csv(
         }
     }
 
-    let mut login_index = build_login_duplicate_index(&payload);
+    let mut login_index = build_login_duplicate_index(payload);
     let mut imported = 0_u32;
     let mut skipped = 0_u32;
     let mut overwritten = 0_u32;
@@ -1419,7 +1470,7 @@ fn handle_import_csv(
                 let key = login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
 
                 if let Some(existing_id) = login_index.get(&key).cloned() {
-                    match args.duplicate {
+                    match duplicate_policy {
                         DuplicatePolicyArg::Skip => {
                             skipped += 1;
                             continue;
@@ -1492,39 +1543,11 @@ fn handle_import_csv(
         }
     }
 
-    persist_vault_payload(
-        &path,
-        &password,
-        &unlocked,
-        payload,
-        config.backup.max_retained,
-    )?;
-    audit_event(
-        "import_invoked",
-        json!({
-            "import_type": "csv",
-            "imported": imported,
-            "skipped": skipped,
-            "overwritten": overwritten
-        }),
-    );
-
-    Ok(CommandOutput {
-        message: format!(
-            "Imported {} rows from {} (skipped {}, overwritten {})",
-            imported,
-            args.input.display(),
-            skipped,
-            overwritten
-        ),
-        payload: json!({
-            "path": path,
-            "input": args.input,
-            "imported": imported,
-            "skipped": skipped,
-            "overwritten": overwritten,
-            "warnings": warnings
-        }),
+    Ok(CsvImportOutcome {
+        imported,
+        skipped,
+        overwritten,
+        warnings,
     })
 }
 
@@ -3907,12 +3930,19 @@ fn diceware_words() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, config_set, decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload,
+        AppConfig, DuplicatePolicyArg, config_set, decode_encrypted_totp_qr_payload,
+        encode_encrypted_totp_qr_payload, export_item_csv_row, import_csv_reader_into_payload,
         map_storage_error, scrub_log_value,
     };
     use npw_core::KdfParams;
+    use npw_core::{
+        LoginItem, NoteItem, TotpAlgorithm, TotpConfig, UrlEntry, UrlMatchType, VaultItem,
+        VaultPayload,
+    };
     use npw_storage::StorageError;
+    use proptest::prelude::*;
     use serde_json::json;
+    use uuid::Uuid;
 
     #[test]
     fn encrypted_totp_qr_payload_roundtrips() {
@@ -3973,5 +4003,248 @@ mod tests {
         assert!(config_set(&mut config, "generator.diceware_words", "3").is_err());
         assert!(config_set(&mut config, "backup.max_retained", "0").is_err());
         assert!(config_set(&mut config, "default_vault", "   ").is_err());
+    }
+
+    #[derive(Debug, Clone)]
+    enum GeneratedCsvItem {
+        Login {
+            title: String,
+            username: Option<String>,
+            password: Option<String>,
+            url_path: Option<String>,
+            notes: Option<String>,
+            tags: Vec<String>,
+            totp: Option<TotpConfig>,
+        },
+        Note {
+            title: String,
+            body: String,
+            tags: Vec<String>,
+        },
+    }
+
+    fn arb_small_string(min: usize, max: usize) -> impl Strategy<Value = String> {
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789_-";
+        prop::collection::vec(any::<u8>(), min..=max).prop_map(|bytes| {
+            bytes
+                .into_iter()
+                .map(|byte| ALPHABET[byte as usize % ALPHABET.len()] as char)
+                .collect()
+        })
+    }
+
+    fn arb_tags() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec(arb_small_string(1, 10), 0..4).prop_map(|tags| {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut out = Vec::new();
+            for tag in tags {
+                if seen.insert(tag.clone()) {
+                    out.push(tag);
+                }
+            }
+            out
+        })
+    }
+
+    fn arb_totp_config() -> impl Strategy<Value = TotpConfig> {
+        let issuer = prop_oneof![Just(None), arb_small_string(1, 12).prop_map(Some)];
+        let algorithm = prop_oneof![
+            Just(TotpAlgorithm::SHA1),
+            Just(TotpAlgorithm::SHA256),
+            Just(TotpAlgorithm::SHA512),
+        ];
+        let digits = prop_oneof![Just(6_u8), Just(8_u8)];
+        let period = prop_oneof![Just(30_u16), Just(60_u16)];
+        (
+            prop::collection::vec(any::<u8>(), 1..33),
+            issuer,
+            algorithm,
+            digits,
+            period,
+        )
+            .prop_map(|(seed, issuer, algorithm, digits, period)| TotpConfig {
+                seed,
+                issuer,
+                algorithm,
+                digits,
+                period,
+            })
+    }
+
+    fn arb_generated_csv_item() -> impl Strategy<Value = GeneratedCsvItem> {
+        let login = (
+            arb_small_string(1, 20),
+            prop_oneof![Just(None), arb_small_string(1, 16).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 24).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 16).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 48).prop_map(Some)],
+            arb_tags(),
+            prop_oneof![Just(None), arb_totp_config().prop_map(Some)],
+        )
+            .prop_map(|(title, username, password, url_path, notes, tags, totp)| {
+                GeneratedCsvItem::Login {
+                    title,
+                    username,
+                    password,
+                    url_path,
+                    notes,
+                    tags,
+                    totp,
+                }
+            });
+
+        let note = (arb_small_string(1, 20), arb_small_string(0, 60), arb_tags())
+            .prop_map(|(title, body, tags)| GeneratedCsvItem::Note { title, body, tags });
+
+        prop_oneof![login, note]
+    }
+
+    fn find_login<'a>(payload: &'a VaultPayload, title: &str) -> Option<&'a LoginItem> {
+        payload.items.iter().find_map(|item| match item {
+            VaultItem::Login(login) if login.title == title => Some(login),
+            _ => None,
+        })
+    }
+
+    fn find_note<'a>(payload: &'a VaultPayload, title: &str) -> Option<&'a NoteItem> {
+        payload.items.iter().find_map(|item| match item {
+            VaultItem::Note(note) if note.title == title => Some(note),
+            _ => None,
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn export_csv_then_import_roundtrips_expected_fields(
+            generated in prop::collection::vec(arb_generated_csv_item(), 1..8),
+            seed in any::<u128>(),
+        ) {
+            let now = 1_700_000_000_u64;
+            let mut expected = Vec::new();
+            let mut rows: Vec<[String; 10]> = Vec::new();
+
+            for (index, item) in generated.into_iter().enumerate() {
+                let id = Uuid::from_u128(seed.wrapping_add(index as u128)).to_string();
+                match item.clone() {
+                    GeneratedCsvItem::Login { title, username, password, url_path, notes, tags, totp } => {
+                        let title = format!("{title}-{index}");
+                        let urls = url_path
+                            .map(|path| {
+                                vec![UrlEntry {
+                                    url: format!("https://example.com/{path}"),
+                                    match_type: UrlMatchType::Exact,
+                                }]
+                            })
+                            .unwrap_or_default();
+                        let vault_item = VaultItem::Login(LoginItem {
+                            id,
+                            title: title.clone(),
+                            urls,
+                            username: username.clone(),
+                            password: password.clone(),
+                            totp: totp.clone(),
+                            notes: notes.clone(),
+                            tags: tags.clone(),
+                            favorite: false,
+                            created_at: 1,
+                            updated_at: 2,
+                        });
+                        rows.push(export_item_csv_row(&vault_item, true));
+                        expected.push((title, item));
+                    }
+                    GeneratedCsvItem::Note { title, body, tags } => {
+                        let title = format!("{title}-{index}");
+                        let vault_item = VaultItem::Note(NoteItem {
+                            id,
+                            title: title.clone(),
+                            body: body.clone(),
+                            tags: tags.clone(),
+                            favorite: false,
+                            created_at: 1,
+                            updated_at: 2,
+                        });
+                        rows.push(export_item_csv_row(&vault_item, true));
+                        expected.push((title, item));
+                    }
+                }
+            }
+
+            let mut writer = csv::Writer::from_writer(Vec::new());
+            writer
+                .write_record([
+                    "type",
+                    "title",
+                    "username",
+                    "password",
+                    "url",
+                    "notes",
+                    "tags",
+                    "totp_uri",
+                    "created_at",
+                    "updated_at",
+                ])
+                .expect("header must write");
+            for row in rows {
+                writer.write_record(row).expect("row must write");
+            }
+            let csv_bytes = writer.into_inner().expect("csv must flush");
+
+            let mut reader = csv::ReaderBuilder::new()
+                .flexible(true)
+                .from_reader(csv_bytes.as_slice());
+            let mut payload = VaultPayload::new("npw", "0.1.0", now);
+            let outcome = import_csv_reader_into_payload(
+                &mut reader,
+                &mut payload,
+                now,
+                DuplicatePolicyArg::KeepBoth,
+            )
+            .expect("import must succeed");
+
+            prop_assert_eq!(outcome.skipped, 0);
+            prop_assert_eq!(outcome.overwritten, 0);
+            prop_assert_eq!(outcome.imported as usize, expected.len());
+            prop_assert!(outcome.warnings.iter().any(|warning| warning.contains("`created_at`")));
+            prop_assert!(outcome.warnings.iter().any(|warning| warning.contains("`updated_at`")));
+
+            for (title, item) in expected {
+                match item {
+                    GeneratedCsvItem::Login { username, password, url_path, notes, tags, totp, .. } => {
+                        let imported = find_login(&payload, &title).expect("login should exist");
+                        prop_assert_eq!(&imported.username, &username);
+                        prop_assert_eq!(&imported.password, &password);
+                        prop_assert_eq!(&imported.notes, &notes);
+                        prop_assert_eq!(&imported.tags, &tags);
+
+                        let expected_url = url_path.map(|path| format!("https://example.com/{path}"));
+                        let imported_url = imported.urls.first().map(|entry| entry.url.clone());
+                        prop_assert_eq!(imported_url, expected_url);
+
+                        match (imported.totp.as_ref(), totp.as_ref()) {
+                            (None, None) => {}
+                            (Some(imported), Some(expected)) => {
+                                prop_assert_eq!(&imported.seed, &expected.seed);
+                                prop_assert_eq!(imported.algorithm, expected.algorithm);
+                                prop_assert_eq!(imported.digits, expected.digits);
+                                prop_assert_eq!(imported.period, expected.period);
+                                let expected_issuer = expected.issuer.clone().or(Some("npw".to_owned()));
+                                prop_assert_eq!(&imported.issuer, &expected_issuer);
+                            }
+                            _ => prop_assert!(false, "totp presence must match"),
+                        }
+                    }
+                    GeneratedCsvItem::Note { body, tags, .. } => {
+                        let imported = find_note(&payload, &title).expect("note should exist");
+                        prop_assert_eq!(&imported.body, &body);
+                        prop_assert_eq!(&imported.tags, &tags);
+                    }
+                }
+            }
+        }
     }
 }

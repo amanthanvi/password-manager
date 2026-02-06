@@ -925,11 +925,18 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use crate::secure_memory::ForceMlockFailGuard;
+    use proptest::prelude::*;
     use serde::{Deserialize, Serialize};
+    use uuid::Uuid;
 
     use super::{
         CreateVaultInput, KdfParams, VaultError, create_vault_file, reencrypt_vault_file_with_kek,
         unlock_vault_file, unlock_vault_file_with_existing_kek, unlock_vault_file_with_kek,
+    };
+
+    use crate::model::{
+        LoginItem, NoteItem, PasskeyRefItem, TotpAlgorithm, TotpConfig, UrlEntry, UrlMatchType,
+        VaultItem, VaultPayload,
     };
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1072,5 +1079,348 @@ mod tests {
         let mut output = Vec::new();
         ciborium::ser::into_writer(&payload, &mut output).expect("payload cbor must encode");
         output
+    }
+
+    #[derive(Debug, Clone)]
+    enum GeneratedItem {
+        Login {
+            title: String,
+            url_path: Option<String>,
+            username: Option<String>,
+            password: Option<String>,
+            notes: Option<String>,
+            tags: Vec<String>,
+            totp: Option<TotpConfig>,
+            favorite: bool,
+        },
+        Note {
+            title: String,
+            body: String,
+            tags: Vec<String>,
+            favorite: bool,
+        },
+        PasskeyRef {
+            title: String,
+            rp_id: String,
+            rp_name: Option<String>,
+            user_display_name: Option<String>,
+            credential_id: Vec<u8>,
+            notes: Option<String>,
+            tags: Vec<String>,
+            favorite: bool,
+        },
+    }
+
+    fn arb_small_string(min: usize, max: usize) -> impl Strategy<Value = String> {
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789_-";
+        prop::collection::vec(any::<u8>(), min..=max).prop_map(|bytes| {
+            bytes
+                .into_iter()
+                .map(|byte| ALPHABET[byte as usize % ALPHABET.len()] as char)
+                .collect()
+        })
+    }
+
+    fn arb_tags() -> impl Strategy<Value = Vec<String>> {
+        prop::collection::vec(arb_small_string(1, 10), 0..4).prop_map(|tags| {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut out = Vec::new();
+            for tag in tags {
+                if seen.insert(tag.clone()) {
+                    out.push(tag);
+                }
+            }
+            out
+        })
+    }
+
+    fn arb_totp_config() -> impl Strategy<Value = TotpConfig> {
+        let issuer = prop_oneof![Just(None), arb_small_string(1, 12).prop_map(Some)];
+        let algorithm = prop_oneof![
+            Just(TotpAlgorithm::SHA1),
+            Just(TotpAlgorithm::SHA256),
+            Just(TotpAlgorithm::SHA512),
+        ];
+        let digits = prop_oneof![Just(6_u8), Just(8_u8)];
+        let period = prop_oneof![Just(30_u16), Just(60_u16)];
+        (
+            prop::collection::vec(any::<u8>(), 1..33),
+            issuer,
+            algorithm,
+            digits,
+            period,
+        )
+            .prop_map(|(seed, issuer, algorithm, digits, period)| TotpConfig {
+                seed,
+                issuer,
+                algorithm,
+                digits,
+                period,
+            })
+    }
+
+    fn arb_generated_item() -> impl Strategy<Value = GeneratedItem> {
+        let login = (
+            arb_small_string(1, 20),
+            prop_oneof![Just(None), arb_small_string(1, 16).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 16).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 24).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 48).prop_map(Some)],
+            arb_tags(),
+            prop_oneof![Just(None), arb_totp_config().prop_map(Some)],
+            any::<bool>(),
+        )
+            .prop_map(
+                |(title, url_path, username, password, notes, tags, totp, favorite)| {
+                    GeneratedItem::Login {
+                        title,
+                        url_path,
+                        username,
+                        password,
+                        notes,
+                        tags,
+                        totp,
+                        favorite,
+                    }
+                },
+            );
+
+        let note = (
+            arb_small_string(1, 20),
+            arb_small_string(0, 60),
+            arb_tags(),
+            any::<bool>(),
+        )
+            .prop_map(|(title, body, tags, favorite)| GeneratedItem::Note {
+                title,
+                body,
+                tags,
+                favorite,
+            });
+
+        let passkey = (
+            arb_small_string(1, 20),
+            arb_small_string(1, 24),
+            prop_oneof![Just(None), arb_small_string(1, 24).prop_map(Some)],
+            prop_oneof![Just(None), arb_small_string(1, 24).prop_map(Some)],
+            prop::collection::vec(any::<u8>(), 1..33),
+            prop_oneof![Just(None), arb_small_string(1, 48).prop_map(Some)],
+            arb_tags(),
+            any::<bool>(),
+        )
+            .prop_map(
+                |(
+                    title,
+                    rp_id,
+                    rp_name,
+                    user_display_name,
+                    credential_id,
+                    notes,
+                    tags,
+                    favorite,
+                )| GeneratedItem::PasskeyRef {
+                    title,
+                    rp_id,
+                    rp_name,
+                    user_display_name,
+                    credential_id,
+                    notes,
+                    tags,
+                    favorite,
+                },
+            );
+
+        prop_oneof![login, note, passkey]
+    }
+
+    fn arb_payload() -> impl Strategy<Value = VaultPayload> {
+        (
+            0_u64..=2_000_000_000,
+            any::<u128>(),
+            prop::collection::vec(arb_generated_item(), 0..8),
+        )
+            .prop_map(|(now, seed, items)| {
+                let mut payload = VaultPayload::new("npw", "0.1.0", now);
+                for (index, item) in items.into_iter().enumerate() {
+                    let id = Uuid::from_u128(seed.wrapping_add(index as u128)).to_string();
+                    let created_at = now;
+                    let updated_at = now;
+                    let item = match item {
+                        GeneratedItem::Login {
+                            title,
+                            url_path,
+                            username,
+                            password,
+                            notes,
+                            tags,
+                            totp,
+                            favorite,
+                        } => VaultItem::Login(LoginItem {
+                            id,
+                            title,
+                            urls: url_path
+                                .map(|path| {
+                                    vec![UrlEntry {
+                                        url: format!("https://example.com/{path}"),
+                                        match_type: UrlMatchType::Exact,
+                                    }]
+                                })
+                                .unwrap_or_default(),
+                            username,
+                            password,
+                            totp,
+                            notes,
+                            tags,
+                            favorite,
+                            created_at,
+                            updated_at,
+                        }),
+                        GeneratedItem::Note {
+                            title,
+                            body,
+                            tags,
+                            favorite,
+                        } => VaultItem::Note(NoteItem {
+                            id,
+                            title,
+                            body,
+                            tags,
+                            favorite,
+                            created_at,
+                            updated_at,
+                        }),
+                        GeneratedItem::PasskeyRef {
+                            title,
+                            rp_id,
+                            rp_name,
+                            user_display_name,
+                            credential_id,
+                            notes,
+                            tags,
+                            favorite,
+                        } => VaultItem::PasskeyRef(PasskeyRefItem {
+                            id,
+                            title,
+                            rp_id,
+                            rp_name,
+                            user_display_name,
+                            credential_id,
+                            notes,
+                            tags,
+                            favorite,
+                            created_at,
+                            updated_at,
+                        }),
+                    };
+
+                    payload
+                        .add_item(item, now)
+                        .expect("generated item must validate");
+                }
+                payload
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 32,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn unlock_with_existing_kek_roundtrips_payload(
+            payload in arb_payload(),
+            kek in any::<[u8; 32]>(),
+            salt in any::<[u8; 16]>(),
+            vault_id in any::<[u8; 16]>(),
+            vault_key in any::<[u8; 32]>(),
+        ) {
+            let payload_bytes = payload.to_cbor().expect("payload must encode");
+            let header = super::VaultHeader {
+                kdf_params: KdfParams {
+                    memory_kib: 64 * 1024,
+                    iterations: 1,
+                    parallelism: 1,
+                },
+                item_count: payload.item_count(),
+                vault_label: "prop".to_owned(),
+                salt,
+            };
+            let envelope = super::EnvelopePlaintext {
+                vault_id,
+                vault_key,
+                created_at: 0,
+                kdf_hint: None,
+                reserved: None,
+            };
+
+            let file = reencrypt_vault_file_with_kek(
+                &kek,
+                &payload_bytes,
+                payload.item_count(),
+                &header,
+                &envelope,
+            )
+            .expect("reencrypt should succeed");
+
+            let unlocked = unlock_vault_file_with_existing_kek(&file, &kek).expect("unlock should succeed");
+            let decoded = VaultPayload::from_cbor(&unlocked.payload_plaintext).expect("decoded payload must validate");
+            prop_assert_eq!(decoded, payload);
+        }
+
+        #[test]
+        fn tampering_header_bytes_breaks_envelope_authentication(
+            payload in arb_payload(),
+            kek in any::<[u8; 32]>(),
+            salt in any::<[u8; 16]>(),
+            vault_id in any::<[u8; 16]>(),
+            vault_key in any::<[u8; 32]>(),
+            tamper_index in 0usize..128,
+        ) {
+            let payload_bytes = payload.to_cbor().expect("payload must encode");
+            let header = super::VaultHeader {
+                kdf_params: KdfParams {
+                    memory_kib: 64 * 1024,
+                    iterations: 1,
+                    parallelism: 1,
+                },
+                item_count: payload.item_count(),
+                vault_label: "prop".to_owned(),
+                salt,
+            };
+            let envelope = super::EnvelopePlaintext {
+                vault_id,
+                vault_key,
+                created_at: 0,
+                kdf_hint: None,
+                reserved: None,
+            };
+
+            let file = reencrypt_vault_file_with_kek(
+                &kek,
+                &payload_bytes,
+                payload.item_count(),
+                &header,
+                &envelope,
+            )
+            .expect("reencrypt should succeed");
+
+            let env_aad_len = super::parse_vault(&file)
+                .expect("freshly created vault should parse")
+                .env_aad
+                .len();
+            prop_assume!(tamper_index < env_aad_len);
+
+            let mut tampered = file.clone();
+            tampered[tamper_index] ^= 0x01;
+
+            match super::parse_vault(&tampered) {
+                Err(_) => {}
+                Ok(_) => {
+                    let result = unlock_vault_file_with_existing_kek(&tampered, &kek);
+                    prop_assert!(matches!(result, Err(VaultError::AuthFailed)));
+                }
+            }
+        }
     }
 }
