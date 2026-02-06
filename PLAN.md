@@ -112,4 +112,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M6 slice complete: `import bitwarden-json` with login/note mapping, duplicate policy handling, and TOTP URI/base32 support.
 - [x] M6 slice complete: `migrate` and `downgrade` command surface with schema guardrails for current v1 payloads.
 - [x] M6 slice complete: CLI `totp add|show|copy|export-qr` (otpauth:// + encrypted QR formats) and clipboard auto-clear helper.
-- [ ] M6 in progress: structured audit logging + secret redaction tests.
+- [x] M6 slice complete: structured audit logging + audit events and secret redaction tests.

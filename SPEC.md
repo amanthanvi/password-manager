@@ -1288,7 +1288,7 @@ All logging uses **structured JSON format** written to a log file.
     - `ts`: ISO 8601 timestamp
     - `level`: `error` | `warn` | `info` | `debug`
     - `msg`: human-readable message
-    - `correlation_id`: unique ID per logical operation (e.g., per vault open, per item save)
+    - `correlation_id`: unique ID per logical operation (e.g., per CLI invocation or per GUI action)
     - `module`: source module name
     - Additional structured fields as appropriate
 
@@ -1322,6 +1322,8 @@ Logs MUST NEVER include:
 - full item records.
 
 Item IDs MAY be logged. Vault path MAY be logged. These redaction rules MUST be unit-tested.
+For `config_changed` audit events, if the config key indicates secrecy (e.g., contains `password` or `secret`),
+the logged value MUST be `"[REDACTED]"`.
 
 ### N4. Telemetry policy
 

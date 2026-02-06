@@ -23,10 +23,210 @@ use qrcode::{EcLevel, QrCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 const JSON_SCHEMA_VERSION: u8 = 1;
 const ENCRYPTED_TOTP_QR_PREFIX: &str = "npw:totp-qr1:";
+const LOG_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
+
+static LOG_CONTEXT: OnceLock<LogContext> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+}
+
+impl LogLevel {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "error" => Some(Self::Error),
+            "warn" | "warning" => Some(Self::Warn),
+            "info" => Some(Self::Info),
+            "debug" => Some(Self::Debug),
+            _ => None,
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LogContext {
+    level: LogLevel,
+    correlation_id: String,
+    log_path: PathBuf,
+}
+
+fn init_logging(config: &AppConfig) {
+    if LOG_CONTEXT.get().is_some() {
+        return;
+    }
+
+    let project_dirs = match ProjectDirs::from("", "", "npw") {
+        Some(value) => value,
+        None => return,
+    };
+    let state_dir = match project_dirs.state_dir() {
+        Some(value) => value,
+        None => return,
+    };
+    let log_path = state_dir.join("npw.log");
+    if let Some(parent) = log_path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
+    }
+
+    let level_raw = std::env::var("NPW_LOG").unwrap_or_else(|_| config.logging.level.clone());
+    let level = LogLevel::parse(&level_raw).unwrap_or(LogLevel::Info);
+    let context = LogContext {
+        level,
+        correlation_id: Uuid::new_v4().to_string(),
+        log_path,
+    };
+    let _ = rotate_log_if_needed(&context.log_path);
+    let _ = LOG_CONTEXT.set(context);
+}
+
+fn audit_event(event: &str, fields: Value) {
+    let mut object = serde_json::Map::new();
+    object.insert("event".to_owned(), json!(event));
+    if let Value::Object(extra) = fields {
+        for (key, value) in extra {
+            object.insert(key, value);
+        }
+    } else {
+        object.insert("fields".to_owned(), fields);
+    }
+    log_json_line(LogLevel::Info, event, "audit", Value::Object(object));
+}
+
+fn log_json_line(level: LogLevel, msg: &str, module: &str, fields: Value) {
+    let context = match LOG_CONTEXT.get() {
+        Some(value) => value,
+        None => return,
+    };
+    if level > context.level {
+        return;
+    }
+
+    let ts = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| OffsetDateTime::now_utc().unix_timestamp().to_string());
+
+    let mut object = serde_json::Map::new();
+    object.insert("ts".to_owned(), json!(ts));
+    object.insert("level".to_owned(), json!(level.as_str()));
+    object.insert("msg".to_owned(), json!(msg));
+    object.insert(
+        "correlation_id".to_owned(),
+        json!(context.correlation_id.as_str()),
+    );
+    object.insert("module".to_owned(), json!(module));
+
+    match scrub_log_value(fields) {
+        Value::Object(extra) => {
+            for (key, value) in extra {
+                object.insert(key, value);
+            }
+        }
+        other => {
+            object.insert("fields".to_owned(), other);
+        }
+    }
+
+    let line = match serde_json::to_string(&Value::Object(object)) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    if line.is_empty() {
+        return;
+    }
+
+    let _ = rotate_log_if_needed(&context.log_path);
+    let mut file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&context.log_path)
+    {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let _ = writeln!(file, "{line}");
+}
+
+fn rotate_log_if_needed(path: &Path) -> Result<(), std::io::Error> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.len() < LOG_ROTATE_BYTES {
+        return Ok(());
+    }
+
+    let rotated = path.with_extension("log.1");
+    if rotated.exists() {
+        let _ = std::fs::remove_file(&rotated);
+    }
+    std::fs::rename(path, rotated)?;
+    Ok(())
+}
+
+fn scrub_log_value(value: Value) -> Value {
+    match value {
+        Value::Object(values) => {
+            let mut output = serde_json::Map::new();
+            for (key, value) in values {
+                if is_sensitive_log_key(&key) {
+                    output.insert(key, json!("[REDACTED]"));
+                } else {
+                    output.insert(key, scrub_log_value(value));
+                }
+            }
+            Value::Object(output)
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(scrub_log_value).collect()),
+        other => other,
+    }
+}
+
+fn is_sensitive_log_key(key: &str) -> bool {
+    matches!(
+        key,
+        "master_password"
+            | "kdf_key"
+            | "kek"
+            | "vault_key"
+            | "payload_key"
+            | "payload_plaintext"
+            | "password"
+            | "seed"
+            | "totp"
+            | "totp_uri"
+            | "notes"
+            | "body"
+            | "items"
+            | "envelope"
+            | "header"
+    ) || key.to_ascii_lowercase().contains("secret")
+}
+
+fn is_sensitive_config_key(key: &str) -> bool {
+    let lowered = key.to_ascii_lowercase();
+    lowered.contains("password") || lowered.contains("secret")
+}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -682,6 +882,7 @@ fn main() -> ExitCode {
 
 fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
     let (mut config, config_path) = load_config(cli.config.clone())?;
+    init_logging(&config);
 
     match &cli.command {
         Command::Vault { command } => match command {
@@ -737,7 +938,7 @@ fn handle_vault_init(
     })
     .map_err(map_vault_error)?;
 
-    write_vault(&path, &vault_bytes, config.backup.max_retained).map_err(map_storage_error)?;
+    write_vault_audited(&path, &vault_bytes, config.backup.max_retained)?;
 
     Ok(CommandOutput {
         message: format!("Created vault at {}", path.display()),
@@ -762,7 +963,28 @@ fn handle_vault_check(
     let path = resolve_vault_path(cli, config, args.path.clone())?;
     let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let password = read_master_password(cli.non_interactive, false)?;
-    let unlocked = unlock_vault_file(&vault_bytes, &password).map_err(map_vault_error)?;
+    let unlocked = match unlock_vault_file(&vault_bytes, &password) {
+        Ok(unlocked) => {
+            audit_event(
+                "vault_unlock_success",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            unlocked
+        }
+        Err(error) => {
+            audit_event(
+                "vault_unlock_failure",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            return Err(map_vault_error(error));
+        }
+    };
 
     Ok(CommandOutput {
         message: format!(
@@ -787,7 +1009,27 @@ fn handle_vault_unlock(
     let path = resolve_vault_path(cli, config, args.path.clone())?;
     let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let password = read_master_password(cli.non_interactive, false)?;
-    unlock_vault_file(&vault_bytes, &password).map_err(map_vault_error)?;
+    match unlock_vault_file(&vault_bytes, &password) {
+        Ok(_) => {
+            audit_event(
+                "vault_unlock_success",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+        }
+        Err(error) => {
+            audit_event(
+                "vault_unlock_failure",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            return Err(map_vault_error(error));
+        }
+    }
 
     Ok(CommandOutput {
         message: format!("Vault unlock successful for {}", path.display()),
@@ -847,6 +1089,14 @@ fn handle_vault_backup(
 
     write_vault(&output_path, &vault_bytes, config.backup.max_retained)
         .map_err(map_storage_error)?;
+    audit_event(
+        "backup_created",
+        json!({
+            "backup_path": output_path,
+            "vault_path": path,
+            "item_count": header.item_count
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!("Created backup at {}", output_path.display()),
@@ -873,7 +1123,28 @@ fn handle_vault_change_password(
     let path = resolve_vault_path(cli, config, args.path.clone())?;
     let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let current_password = read_master_password(false, false)?;
-    let unlocked = unlock_vault_file(&vault_bytes, &current_password).map_err(map_vault_error)?;
+    let unlocked = match unlock_vault_file(&vault_bytes, &current_password) {
+        Ok(unlocked) => {
+            audit_event(
+                "vault_unlock_success",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            unlocked
+        }
+        Err(error) => {
+            audit_event(
+                "vault_unlock_failure",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            return Err(map_vault_error(error));
+        }
+    };
     let new_password = read_master_password(false, true)?;
     validate_master_password(&new_password)?;
 
@@ -897,7 +1168,7 @@ fn handle_vault_change_password(
         .map_err(map_vault_error)?
     };
 
-    write_vault(&path, &rewritten, config.backup.max_retained).map_err(map_storage_error)?;
+    write_vault_audited(&path, &rewritten, config.backup.max_retained)?;
 
     Ok(CommandOutput {
         message: "Master password updated".to_owned(),
@@ -1227,6 +1498,15 @@ fn handle_import_csv(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "import_invoked",
+        json!({
+            "import_type": "csv",
+            "imported": imported,
+            "skipped": skipped,
+            "overwritten": overwritten
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!(
@@ -1423,6 +1703,15 @@ fn handle_import_bitwarden_json(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "import_invoked",
+        json!({
+            "import_type": "bitwarden-json",
+            "imported": imported,
+            "skipped": skipped,
+            "overwritten": overwritten
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!(
@@ -1449,6 +1738,13 @@ fn handle_export_csv(
     args: &ExportArgs,
 ) -> Result<CommandOutput, CliError> {
     confirm_plaintext_export(cli, args.include_secrets, args.yes)?;
+    audit_event(
+        "export_invoked",
+        json!({
+            "export_type": "csv",
+            "redacted": !args.include_secrets
+        }),
+    );
     let (_path, _password, _unlocked, payload) =
         load_vault_payload(cli, config, args.path.clone())?;
     ensure_output_parent(&args.output)?;
@@ -1497,6 +1793,13 @@ fn handle_export_json(
     args: &ExportArgs,
 ) -> Result<CommandOutput, CliError> {
     confirm_plaintext_export(cli, args.include_secrets, args.yes)?;
+    audit_event(
+        "export_invoked",
+        json!({
+            "export_type": "json",
+            "redacted": !args.include_secrets
+        }),
+    );
     let (_path, _password, _unlocked, payload) =
         load_vault_payload(cli, config, args.path.clone())?;
     ensure_output_parent(&args.output)?;
@@ -1539,6 +1842,13 @@ fn handle_export_encrypted(
             "encrypted export does not support --non-interactive",
         ));
     }
+    audit_event(
+        "export_invoked",
+        json!({
+            "export_type": "encrypted",
+            "redacted": args.redacted
+        }),
+    );
     let (path, master_password, unlocked, payload) =
         load_vault_payload(cli, config, args.path.clone())?;
     if path == args.output {
@@ -1893,6 +2203,13 @@ fn handle_item_add_login(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "item_created",
+        json!({
+            "item_id": item_id,
+            "item_type": "login"
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!("Created login item {item_id}"),
@@ -1931,6 +2248,13 @@ fn handle_item_add_note(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "item_created",
+        json!({
+            "item_id": item_id,
+            "item_type": "note"
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!("Created note item {item_id}"),
@@ -1972,6 +2296,13 @@ fn handle_item_add_passkey(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "item_created",
+        json!({
+            "item_id": item_id,
+            "item_type": "passkey_ref"
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!("Created passkey_ref item {item_id}"),
@@ -2054,6 +2385,12 @@ fn handle_item_delete(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "item_deleted",
+        json!({
+            "item_id": args.id
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!("Deleted item {}", args.id),
@@ -2160,6 +2497,13 @@ fn handle_totp_add(
         payload,
         config.backup.max_retained,
     )?;
+    audit_event(
+        "item_updated",
+        json!({
+            "item_id": args.id,
+            "item_type": "login"
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!("Added TOTP to item {}", args.id),
@@ -2649,6 +2993,14 @@ fn handle_recover(
     let (selected_backup, selected_header) = &valid_backups[selected_index];
     let corrupt_path =
         recover_from_backup(&path, &selected_backup.path).map_err(map_storage_error)?;
+    audit_event(
+        "backup_restored",
+        json!({
+            "vault_path": path,
+            "backup_path": selected_backup.path,
+            "backup_timestamp": selected_backup.timestamp
+        }),
+    );
 
     Ok(CommandOutput {
         message: format!(
@@ -2759,9 +3111,50 @@ fn load_vault_payload(
     let path = resolve_vault_path(cli, config, command_path)?;
     let vault_bytes = read_vault(&path).map_err(map_storage_error)?;
     let password = read_master_password(cli.non_interactive, false)?;
-    let unlocked = unlock_vault_file(&vault_bytes, &password).map_err(map_vault_error)?;
+    let unlocked = match unlock_vault_file(&vault_bytes, &password) {
+        Ok(unlocked) => {
+            audit_event(
+                "vault_unlock_success",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            unlocked
+        }
+        Err(error) => {
+            audit_event(
+                "vault_unlock_failure",
+                json!({
+                    "vault_path": path,
+                    "method": "password"
+                }),
+            );
+            return Err(map_vault_error(error));
+        }
+    };
     let payload = VaultPayload::from_cbor(&unlocked.payload_plaintext).map_err(map_model_error)?;
     Ok((path, password, unlocked, payload))
+}
+
+fn write_vault_audited(path: &Path, bytes: &[u8], max_retained: usize) -> Result<(), CliError> {
+    let existed = path.exists();
+    write_vault(path, bytes, max_retained).map_err(map_storage_error)?;
+
+    if existed
+        && let Ok(backups) = list_backups(path)
+        && let Some(backup) = backups.first()
+    {
+        audit_event(
+            "backup_created",
+            json!({
+                "backup_path": backup.path,
+                "timestamp": backup.timestamp
+            }),
+        );
+    }
+
+    Ok(())
 }
 
 fn persist_vault_payload(
@@ -2781,7 +3174,7 @@ fn persist_vault_payload(
         envelope: &unlocked.envelope,
     })
     .map_err(map_vault_error)?;
-    write_vault(path, &file, max_retained).map_err(map_storage_error)
+    write_vault_audited(path, &file, max_retained)
 }
 
 fn items_to_json(items: &[&VaultItem]) -> Result<Vec<Value>, CliError> {
@@ -2817,6 +3210,18 @@ fn handle_config(
         ConfigCommand::Set { key, value } => {
             config_set(config, key, value)?;
             save_config(config, config_path)?;
+            let value_for_log = if is_sensitive_config_key(key) {
+                "[REDACTED]"
+            } else {
+                value.as_str()
+            };
+            audit_event(
+                "config_changed",
+                json!({
+                    "key": key,
+                    "value": value_for_log
+                }),
+            );
             Ok(CommandOutput {
                 message: format!("Updated {key}"),
                 payload: json!({
@@ -3439,8 +3844,11 @@ fn diceware_words() -> &'static [&'static str] {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload};
+    use super::{
+        decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload, scrub_log_value,
+    };
     use npw_core::KdfParams;
+    use serde_json::json;
 
     #[test]
     fn encrypted_totp_qr_payload_roundtrips() {
@@ -3458,5 +3866,27 @@ mod tests {
             decode_encrypted_totp_qr_payload(&encoded, password).expect("payload should decode");
 
         assert_eq!(decoded, otpauth);
+    }
+
+    #[test]
+    fn scrub_log_value_redacts_sensitive_fields() {
+        let secret = "super-secret-value";
+        let scrubbed = scrub_log_value(json!({
+            "master_password": secret,
+            "nested": {
+                "password": secret,
+                "seed": secret,
+                "safe": "ok"
+            },
+            "array": [
+                { "totp_uri": secret },
+                { "body": secret }
+            ]
+        }));
+
+        let encoded = serde_json::to_string(&scrubbed).expect("scrubbed JSON should encode");
+        assert!(!encoded.contains(secret));
+        assert!(encoded.contains("[REDACTED]"));
+        assert!(encoded.contains("ok"));
     }
 }
