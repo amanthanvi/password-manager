@@ -110,4 +110,5 @@ These become authoritative once scaffolded in Step 1:
 - [x] M6 slice complete: `import csv` (duplicate policy + unknown-column warnings) and `export csv|json|encrypted` with redacted defaults and plaintext warning/ack flows.
 - [x] M6 slice complete: `passkey list|show|open-site|copy-username` commands over `passkey_ref` items.
 - [x] M6 slice complete: `import bitwarden-json` with login/note mapping, duplicate policy handling, and TOTP URI/base32 support.
-- [ ] M6 in progress: remaining CLI parity (migration commands, TOTP copy/export-qr) and structured audit logging.
+- [x] M6 slice complete: `migrate` and `downgrade` command surface with schema guardrails for current v1 payloads.
+- [ ] M6 in progress: remaining CLI parity (TOTP copy/export-qr) and structured audit logging.

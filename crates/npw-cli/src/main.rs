@@ -103,6 +103,8 @@ enum Command {
         #[command(subcommand)]
         command: ExportCommand,
     },
+    Migrate(MigrateArgs),
+    Downgrade(DowngradeArgs),
     Totp(TotpArgs),
     Recover(RecoverArgs),
     Search(SearchArgs),
@@ -186,6 +188,18 @@ struct RecoverArgs {
     path: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
     auto: bool,
+}
+
+#[derive(Debug, Args)]
+struct MigrateArgs {
+    path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    upgrade: bool,
+}
+
+#[derive(Debug, Args)]
+struct DowngradeArgs {
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -601,6 +615,8 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
         Command::Passkey { command } => handle_passkey_command(cli, &config, command),
         Command::Import { command } => handle_import_command(cli, &config, command),
         Command::Export { command } => handle_export_command(cli, &config, command),
+        Command::Migrate(args) => handle_migrate(cli, &config, args),
+        Command::Downgrade(args) => handle_downgrade(cli, &config, args),
         Command::Totp(args) => handle_totp(cli, &config, args),
         Command::Recover(args) => handle_recover(cli, &config, args),
         Command::Search(args) => handle_search(cli, &config, args),
@@ -2115,6 +2131,57 @@ fn prompt_recovery_selection(
         )));
     }
     Ok(parsed - 1)
+}
+
+fn handle_migrate(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &MigrateArgs,
+) -> Result<CommandOutput, CliError> {
+    let (path, _password, _unlocked, payload) = load_vault_payload(cli, config, args.path.clone())?;
+    if payload.schema <= 1 {
+        return Ok(CommandOutput {
+            message: "Vault already uses the latest schema (v1); no migration required".to_owned(),
+            payload: json!({
+                "path": path,
+                "from_schema": payload.schema,
+                "to_schema": payload.schema,
+                "changed": false,
+                "upgrade_flag": args.upgrade
+            }),
+        });
+    }
+
+    Err(CliError {
+        code: CliExitCode::CorruptOrParse,
+        kind: "unsupported_schema_version",
+        message: format!(
+            "vault schema {} is newer than this CLI supports",
+            payload.schema
+        ),
+    })
+}
+
+fn handle_downgrade(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &DowngradeArgs,
+) -> Result<CommandOutput, CliError> {
+    let (path, _password, _unlocked, payload) = load_vault_payload(cli, config, args.path.clone())?;
+    if payload.schema == 1 {
+        return Ok(CommandOutput {
+            message: "Vault is already at schema v1; no downgrade required".to_owned(),
+            payload: json!({
+                "path": path,
+                "schema": payload.schema,
+                "changed": false
+            }),
+        });
+    }
+
+    Err(CliError::usage(
+        "downgrade is unavailable for this schema version in v0.1.0",
+    ))
 }
 
 fn load_vault_payload(
