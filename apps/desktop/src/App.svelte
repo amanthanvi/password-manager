@@ -1888,6 +1888,72 @@
         />
       </label>
 
+      <div class="workspace-grid">
+        <div class="workspace-left">
+          {#if status}
+            <section class="items">
+              <h2>Items</h2>
+              <div class="filters">
+                <label>
+                  Type
+                  <select bind:value={filterType}>
+                    <option value="all">All</option>
+                    <option value="login">Logins</option>
+                    <option value="note">Notes</option>
+                    <option value="passkey_ref">Passkey refs</option>
+                  </select>
+                </label>
+                <label class="inline">
+                  <input type="checkbox" bind:checked={filterFavoritesOnly} />
+                  Favorites only
+                </label>
+                <label>
+                  Tag
+                  <input bind:value={filterTag} list="tag-suggestions" placeholder="work" />
+                </label>
+                <datalist id="tag-suggestions">
+                  {#each availableTags as tag (tag)}
+                    <option value={tag}></option>
+                  {/each}
+                </datalist>
+              </div>
+
+              {#if itemsView.length === 0}
+                <p class="muted">No items found.</p>
+              {:else}
+                <ul class="item-list">
+                  {#each itemsView as item (item.id)}
+                    <li class:selected={selectedItem?.id === item.id}>
+                      <button class="row" type="button" on:click={() => selectItem(item)}>
+                        <strong>{item.title}</strong>
+                        <span class="meta">
+                          {item.itemType}
+                          {#if item.favorite}
+                            · ★
+                          {/if}
+                          {#if item.subtitle}
+                            · {item.subtitle}
+                          {/if}
+                          {#if item.url}
+                            · {item.url}
+                          {/if}
+                          {#if item.tags && item.tags.length > 0}
+                            · {item.tags.slice(0, 3).join(', ')}
+                          {/if}
+                          {#if item.hasTotp}
+                            · TOTP
+                          {/if}
+                        </span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/if}
+        </div>
+
+        <div class="workspace-right">
   {#if status}
     <section class="import-export">
       <h2>Import / Export</h2>
@@ -2176,68 +2242,6 @@
     <pre>{JSON.stringify(status, null, 2)}</pre>
   {/if}
 
-  {#if status}
-    <section class="items">
-      <h2>Items</h2>
-      <div class="filters">
-        <label>
-          Type
-          <select bind:value={filterType}>
-            <option value="all">All</option>
-            <option value="login">Logins</option>
-            <option value="note">Notes</option>
-            <option value="passkey_ref">Passkey refs</option>
-          </select>
-        </label>
-        <label class="inline">
-          <input type="checkbox" bind:checked={filterFavoritesOnly} />
-          Favorites only
-        </label>
-        <label>
-          Tag
-          <input bind:value={filterTag} list="tag-suggestions" placeholder="work" />
-        </label>
-        <datalist id="tag-suggestions">
-          {#each availableTags as tag (tag)}
-            <option value={tag}></option>
-          {/each}
-        </datalist>
-      </div>
-
-      {#if itemsView.length === 0}
-        <p class="muted">No items found.</p>
-      {:else}
-        <ul class="item-list">
-          {#each itemsView as item (item.id)}
-            <li class:selected={selectedItem?.id === item.id}>
-              <button class="row" type="button" on:click={() => selectItem(item)}>
-                <strong>{item.title}</strong>
-                <span class="meta">
-                  {item.itemType}
-                  {#if item.favorite}
-                    · ★
-                  {/if}
-                  {#if item.subtitle}
-                    · {item.subtitle}
-                  {/if}
-                  {#if item.url}
-                    · {item.url}
-                  {/if}
-                  {#if item.tags && item.tags.length > 0}
-                    · {item.tags.slice(0, 3).join(', ')}
-                  {/if}
-                  {#if item.hasTotp}
-                    · TOTP
-                  {/if}
-                </span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-  {/if}
-
   {#if status && selectedItem && loginDetail}
     <section class="detail">
       <h2>Login</h2>
@@ -2473,6 +2477,8 @@
     </section>
   {/if}
 
+        </div>
+      </div>
     </section>
   </div>
 
@@ -2730,6 +2736,21 @@
     min-height: 0;
     overflow: auto;
     padding-right: 0.35rem;
+  }
+
+  .workspace-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
+    gap: 0.85rem;
+    align-items: start;
+  }
+
+  .workspace-left,
+  .workspace-right {
+    display: grid;
+    gap: 0.85rem;
+    align-content: start;
+    min-width: 0;
   }
 
   .picker,
@@ -3157,6 +3178,10 @@
 
   @media (max-width: 1100px) {
     .layout {
+      grid-template-columns: 1fr;
+    }
+
+    .workspace-grid {
       grid-template-columns: 1fr;
     }
 
