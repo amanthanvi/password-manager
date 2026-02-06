@@ -8,7 +8,10 @@ use npw_core::{
     VaultPayload, assess_master_password, create_vault_file, generate_totp, parse_vault_header,
     reencrypt_vault_file_with_kek, unlock_vault_file, unlock_vault_file_with_kek,
 };
-use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault, write_vault_with_lock};
+use npw_storage::{
+    VaultLock, acquire_vault_lock, list_backups, read_vault, recover_from_backup, write_vault,
+    write_vault_with_lock,
+};
 use qrcode::QrCode;
 use uuid::Uuid;
 use zeroize::Zeroize;
@@ -82,6 +85,54 @@ pub fn vault_check(path: String, master_password: String) -> Result<VaultStatus>
         kdf_memory_kib: unlocked.header.kdf_params.memory_kib,
         kdf_iterations: unlocked.header.kdf_params.iterations,
         kdf_parallelism: unlocked.header.kdf_params.parallelism,
+    })
+}
+
+#[napi(object)]
+pub struct BackupCandidate {
+    pub path: String,
+    pub timestamp: u32,
+    pub item_count: u32,
+    pub label: String,
+}
+
+#[napi(object)]
+pub struct VaultRecoveryResult {
+    pub corrupt_path: Option<String>,
+}
+
+#[napi]
+pub fn vault_list_backups(path: String) -> Result<Vec<BackupCandidate>> {
+    let path_ref = std::path::Path::new(&path);
+    let backups = list_backups(path_ref).map_err(|error| error_to_napi(error.to_string()))?;
+    let mut candidates = Vec::new();
+
+    for backup in backups {
+        let bytes = read_vault(&backup.path).map_err(|error| error_to_napi(error.to_string()))?;
+        if let Ok(header) = parse_vault_header(&bytes) {
+            candidates.push(BackupCandidate {
+                path: backup.path.to_string_lossy().to_string(),
+                timestamp: u32::try_from(backup.timestamp).unwrap_or(u32::MAX),
+                item_count: header.item_count,
+                label: header.vault_label,
+            });
+        }
+    }
+
+    Ok(candidates)
+}
+
+#[napi]
+pub fn vault_recover_from_backup(
+    vault_path: String,
+    backup_path: String,
+) -> Result<VaultRecoveryResult> {
+    let vault_path_ref = std::path::Path::new(&vault_path);
+    let backup_path_ref = std::path::Path::new(&backup_path);
+    let corrupt_path = recover_from_backup(vault_path_ref, backup_path_ref)
+        .map_err(|error| error_to_napi(error.to_string()))?;
+    Ok(VaultRecoveryResult {
+        corrupt_path: corrupt_path.map(|path| path.to_string_lossy().to_string()),
     })
 }
 
