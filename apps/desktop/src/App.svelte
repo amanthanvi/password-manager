@@ -1815,67 +1815,86 @@
         Reload
       </button>
     </div>
-  </section>
+	  </section>
 
-  <label>
-    Vault path
-    <input bind:value={vaultPath} on:blur={refreshQuickUnlockForPath} />
-  </label>
+	  <section class="vault">
+	    <h2>Vault</h2>
 
-  <label>
-    Vault label
-    <input bind:value={vaultLabel} />
-  </label>
+	    <label>
+	      Vault path
+	      <input bind:value={vaultPath} on:blur={refreshQuickUnlockForPath} />
+	    </label>
 
-  <label>
-    Master password
-    <input bind:value={masterPassword} type="password" />
-  </label>
+	    <label>
+	      Vault label
+	      <input bind:value={vaultLabel} />
+	    </label>
 
-  <div class="actions">
-    <button on:click={createVault} disabled={!bridgeAvailable}>Create Vault</button>
-    <button on:click={unlockVault} disabled={!bridgeAvailable}>Unlock Vault</button>
-    {#if !status && quickUnlockForPath.configured}
-      <button
-        class="secondary"
-        type="button"
-        on:click={quickUnlockVault}
-        disabled={!bridgeAvailable || quickUnlockBusy || !quickUnlockForPath.available || !quickUnlockForPath.enabled}
-      >
-        Quick Unlock
-      </button>
-    {/if}
-    <button on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
-  </div>
+	    <label>
+	      Master password
+	      <input bind:value={masterPassword} type="password" />
+	    </label>
 
-  {#if !status && quickUnlockForPath.error}
-    <p class="callout">{quickUnlockForPath.error}</p>
-  {/if}
+	    <div class="actions">
+	      <button on:click={createVault} disabled={!bridgeAvailable}>Create Vault</button>
+	      <button on:click={unlockVault} disabled={!bridgeAvailable}>Unlock Vault</button>
+	      {#if !status && quickUnlockForPath.configured}
+	        <button
+	          class="secondary"
+	          type="button"
+	          on:click={quickUnlockVault}
+	          disabled={!bridgeAvailable || quickUnlockBusy || !quickUnlockForPath.available || !quickUnlockForPath.enabled}
+	        >
+	          Quick Unlock
+	        </button>
+	      {/if}
+	      <button on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
+	    </div>
 
-  {#if status}
-    <section class="quick-unlock">
-      <h2>Quick Unlock (OS keychain)</h2>
-      <p class="muted">
-        Store key material in your OS keychain so this vault can be unlocked without the master password.
-      </p>
-      <label class="inline">
-        <input
-          type="checkbox"
-          checked={quickUnlockForCurrent.enabled}
-          on:change={(event) => setQuickUnlockEnabled(event.currentTarget.checked)}
-          disabled={quickUnlockBusy || !quickUnlockForCurrent.available}
-        />
-        Enable Quick Unlock for this vault
-      </label>
-      {#if quickUnlockForCurrent.error}
-        <p class="callout">{quickUnlockForCurrent.error}</p>
-      {:else if !quickUnlockForCurrent.available}
-        <p class="callout">Quick Unlock is unavailable on this system.</p>
-      {/if}
-    </section>
-  {/if}
+	    {#if !status && quickUnlockForPath.error}
+	      <p class="callout">{quickUnlockForPath.error}</p>
+	    {/if}
+	  </section>
 
-    </aside>
+	  {#if status}
+	    <details class="quick-unlock fold">
+	      <summary>
+	        <span>Quick Unlock</span>
+	        <span class="summary-meta">
+	          {#if quickUnlockForCurrent.error}
+	            Error
+	          {:else if !quickUnlockForCurrent.available}
+	            Unavailable
+	          {:else if quickUnlockForCurrent.enabled}
+	            Enabled
+	          {:else}
+	            Disabled
+	          {/if}
+	        </span>
+	      </summary>
+	      <div class="fold-body">
+	        <p class="muted">
+	          Store key material in your OS keychain so this vault can be unlocked without the master password.
+	        </p>
+	        <label class="inline">
+	          <input
+	            type="checkbox"
+	            checked={quickUnlockForCurrent.enabled}
+	            on:change={(event) => setQuickUnlockEnabled(event.currentTarget.checked)}
+	            disabled={quickUnlockBusy || !quickUnlockForCurrent.available}
+	          />
+	          Enable Quick Unlock for this vault
+	        </label>
+	        {#if quickUnlockForCurrent.error}
+	          <p class="callout">{quickUnlockForCurrent.error}</p>
+	        {:else if !quickUnlockForCurrent.available}
+	          <p class="callout">Quick Unlock is unavailable on this system.</p>
+	        {/if}
+	      </div>
+	    </details>
+	  {/if}
+
+	    </aside>
 
     <section class="workspace">
       <label class="search">
@@ -1889,14 +1908,17 @@
       </label>
 
       <div class="workspace-grid">
-        <div class="workspace-left">
-          {#if status}
-            <section class="items">
-              <h2>Items</h2>
-              <div class="filters">
-                <label>
-                  Type
-                  <select bind:value={filterType}>
+	        <div class="workspace-left">
+	          {#if status}
+	            <section class="items">
+	              <div class="card-head">
+	                <h2>Items</h2>
+	                <button class="secondary" type="button" on:click={refreshItems} disabled={!status}>Refresh</button>
+	              </div>
+	              <div class="filters">
+	                <label>
+	                  Type
+	                  <select bind:value={filterType}>
                     <option value="all">All</option>
                     <option value="login">Logins</option>
                     <option value="note">Notes</option>
@@ -2247,14 +2269,18 @@
     </details>
   {/if}
 
-  <div class="actions">
-    <button on:click={refreshItems} disabled={!status}>Refresh Items</button>
-  </div>
-
   <pre class="result">{lastResult}</pre>
 
   {#if status}
-    <pre>{JSON.stringify(status, null, 2)}</pre>
+    <details class="debug fold">
+      <summary>
+        <span>Debug status</span>
+        <span class="summary-meta">Session snapshot</span>
+      </summary>
+      <div class="fold-body">
+        <pre class="note mono">{JSON.stringify(status, null, 2)}</pre>
+      </div>
+    </details>
   {/if}
 
   {#if status && selectedItem && loginDetail}
@@ -2770,12 +2796,14 @@
 
   .picker,
   .settings,
+  .vault,
   .quick-unlock,
   .import-export,
   .add-login,
   .add-note,
   .add-passkey,
   .items,
+  .debug,
   .detail,
   .search {
     display: grid;
@@ -2845,13 +2873,24 @@
 
   .picker h2,
   .settings h2,
-  .quick-unlock h2,
+  .vault h2,
   .add-login h2,
   .items h2,
   .detail h2 {
     margin: 0;
     font-size: 1rem;
     letter-spacing: 0.02em;
+  }
+
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.85rem;
+  }
+
+  .card-head button {
+    padding: 0.4rem 0.7rem;
   }
 
   label {
