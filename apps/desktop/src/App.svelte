@@ -1949,7 +1949,7 @@
                       <button class="row" type="button" on:click={() => selectItem(item)}>
                         <strong>{item.title}</strong>
                         <span class="meta">
-                          {item.itemType}
+                          <span class="type-badge">{item.itemType}</span>
                           {#if item.favorite}
                             · ★
                           {/if}
@@ -2291,7 +2291,7 @@
         <button type="button" on:click={updateLogin} disabled={loginEditBusy || loginEditTitle.trim().length === 0}>
           {loginEditBusy ? 'Saving…' : 'Save'}
         </button>
-        <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
+        <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
       </div>
 
       <label>
@@ -2421,7 +2421,7 @@
         <button type="button" on:click={updateNote} disabled={noteEditBusy || noteEditTitle.trim().length === 0}>
           {noteEditBusy ? 'Saving…' : 'Save'}
         </button>
-        <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
+        <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
       </div>
 
       <label>
@@ -2465,7 +2465,7 @@
         </button>
         <button on:click={openPasskeySite}>Open Site</button>
         <button on:click={openPasskeyManager}>Open Passkey Manager</button>
-        <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
+        <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
       </div>
 
       <label>
@@ -2929,8 +2929,9 @@
 
   .actions {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.65rem;
     flex-wrap: wrap;
+    margin-top: 0.25rem;
   }
 
   button {
@@ -2942,14 +2943,14 @@
       radial-gradient(80% 120% at 20% 0%, rgba(255, 255, 255, 0.35), transparent 55%),
       linear-gradient(135deg, rgba(11, 114, 133, 0.95), rgba(4, 55, 66, 0.95));
     color: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 10px 25px rgba(11, 27, 38, 0.22);
+    box-shadow: 0 2px 6px rgba(11, 27, 38, 0.15);
     transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
   }
 
   button:hover:not(:disabled) {
     filter: brightness(1.03) saturate(1.02);
     transform: translateY(-1px);
-    box-shadow: 0 14px 32px rgba(11, 27, 38, 0.25);
+    box-shadow: 0 4px 12px rgba(11, 27, 38, 0.2);
   }
 
   button:active:not(:disabled) {
@@ -2976,19 +2977,38 @@
     box-shadow: none;
   }
 
+  button.destructive {
+    border-color: rgba(180, 35, 24, 0.35);
+    background: rgba(180, 35, 24, 0.08);
+    color: var(--danger);
+    box-shadow: none;
+  }
+
+  button.destructive:hover:not(:disabled) {
+    background: rgba(180, 35, 24, 0.15);
+    box-shadow: none;
+    filter: none;
+    transform: none;
+  }
+
   pre {
     margin: 0;
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.5);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 0.85rem;
+    border-radius: var(--radius-sm);
+    padding: 0.55rem 0.75rem;
     white-space: pre-wrap;
     word-break: break-word;
-    box-shadow: var(--shadow-sm);
+    font-size: 0.85rem;
+    color: var(--ink-2);
+    box-shadow: none;
   }
 
   .result {
-    min-height: 3.2rem;
+    min-height: 2.2rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--ink-3);
   }
 
   .toast-host {
@@ -3132,16 +3152,29 @@
   }
 
   li.selected .row {
-    border-color: rgba(11, 114, 133, 0.55);
-    background: rgba(11, 114, 133, 0.1);
-    box-shadow: var(--ring);
+    border-color: var(--accent);
+    border-left: 3px solid var(--accent);
+    background: rgba(11, 114, 133, 0.07);
+    box-shadow: none;
   }
 
   .meta {
     display: block;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: var(--ink-3);
-    margin-top: 0.15rem;
+    margin-top: 0.2rem;
+  }
+
+  .type-badge {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    background: rgba(11, 114, 133, 0.1);
+    color: var(--accent);
+    margin-right: 0.35rem;
   }
 
   .muted {
@@ -3152,6 +3185,8 @@
   .detail {
     display: grid;
     gap: 0.85rem;
+    border-color: rgba(11, 114, 133, 0.25);
+    background: rgba(255, 255, 255, 0.88);
   }
 
   .field {
@@ -3192,8 +3227,12 @@
   }
 
   .note {
-    background: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.55);
     border: 1px solid var(--border);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    max-height: 22rem;
+    overflow: auto;
   }
 
   .mono {
@@ -3282,9 +3321,22 @@
     word-break: break-word;
   }
 
+  .picker,
+  .settings {
+    border-color: transparent;
+    background: rgba(255, 255, 255, 0.45);
+    box-shadow: none;
+  }
+
+  .vault {
+    border-color: var(--border-strong);
+  }
+
   @media (max-width: 1100px) {
     .layout {
       grid-template-columns: 1fr;
+      max-width: 44rem;
+      margin-inline: auto;
     }
 
     .workspace-grid {
