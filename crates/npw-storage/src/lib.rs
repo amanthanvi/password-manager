@@ -18,6 +18,12 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupEntry {
+    pub path: PathBuf,
+    pub timestamp: u64,
+}
+
 pub fn read_vault(path: &Path) -> Result<Vec<u8>, StorageError> {
     Ok(fs::read(path)?)
 }
@@ -31,6 +37,41 @@ pub fn write_vault(path: &Path, bytes: &[u8], max_retained: usize) -> Result<(),
 
     write_vault_atomic(path, bytes)?;
     Ok(())
+}
+
+pub fn list_backups(path: &Path) -> Result<Vec<BackupEntry>, StorageError> {
+    let backup_dir = backup_directory(path);
+    if !backup_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut backups = Vec::new();
+    for entry in fs::read_dir(backup_dir)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        if !entry_path.is_file() {
+            continue;
+        }
+        if let Some(timestamp) = parse_backup_timestamp(&entry_path) {
+            backups.push(BackupEntry {
+                path: entry_path,
+                timestamp,
+            });
+        }
+    }
+    backups.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    Ok(backups)
+}
+
+pub fn recover_from_backup(
+    vault_path: &Path,
+    backup_path: &Path,
+) -> Result<Option<PathBuf>, StorageError> {
+    let _lock = acquire_lock(vault_path)?;
+    let backup_bytes = fs::read(backup_path)?;
+    let corrupt_path = preserve_corrupt_vault(vault_path)?;
+    write_vault_atomic(vault_path, &backup_bytes)?;
+    Ok(corrupt_path)
 }
 
 fn acquire_lock(path: &Path) -> Result<File, StorageError> {
@@ -80,6 +121,25 @@ fn backup_directory(path: &Path) -> PathBuf {
     path.parent()
         .unwrap_or_else(|| Path::new("."))
         .join(format!("{file_name}.backups"))
+}
+
+fn preserve_corrupt_vault(vault_path: &Path) -> Result<Option<PathBuf>, StorageError> {
+    if !vault_path.exists() {
+        return Ok(None);
+    }
+
+    let parent = vault_path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = vault_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("vault.npw");
+    let mut corrupt_path = parent.join(format!("{file_name}.corrupt"));
+    if corrupt_path.exists() {
+        corrupt_path = parent.join(format!("{file_name}.corrupt-{}", unix_seconds_now()));
+    }
+
+    fs::rename(vault_path, &corrupt_path)?;
+    Ok(Some(corrupt_path))
 }
 
 fn compact_backups(
@@ -217,8 +277,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        StorageError, backup_directory, compact_backups, lock_file_path, parse_backup_timestamp,
-        read_vault, write_vault,
+        StorageError, backup_directory, compact_backups, list_backups, lock_file_path,
+        parse_backup_timestamp, read_vault, recover_from_backup, write_vault,
     };
 
     fn temp_path(file_name: &str) -> PathBuf {
@@ -300,6 +360,49 @@ mod tests {
         assert!(!remaining.contains(&(now - (2 * 24 * 60 * 60) - 300)));
 
         let _ = fs::remove_dir_all(backup_dir);
+        let _ = fs::remove_file(vault_path);
+    }
+
+    #[test]
+    fn list_backups_returns_newest_first() {
+        let vault_path = temp_path("list-backups-source.npw");
+        fs::write(&vault_path, b"seed").expect("seed write");
+        let backup_dir = backup_directory(&vault_path);
+        fs::create_dir_all(&backup_dir).expect("create backup dir");
+
+        for timestamp in [100_u64, 300, 200] {
+            let path = backup_dir.join(format!("backup-{timestamp}.npw"));
+            fs::write(path, b"backup").expect("write backup");
+        }
+
+        let backups = list_backups(&vault_path).expect("list backups");
+        let timestamps: Vec<u64> = backups.iter().map(|entry| entry.timestamp).collect();
+        assert_eq!(timestamps, vec![300, 200, 100]);
+
+        let _ = fs::remove_dir_all(backup_dir);
+        let _ = fs::remove_file(vault_path);
+    }
+
+    #[test]
+    fn recover_from_backup_restores_and_preserves_corrupt_vault() {
+        let vault_path = temp_path("recover-source.npw");
+        fs::write(&vault_path, b"corrupt").expect("write corrupt vault");
+        let backup_dir = backup_directory(&vault_path);
+        fs::create_dir_all(&backup_dir).expect("create backup dir");
+        let backup_path = backup_dir.join("backup-123.npw");
+        fs::write(&backup_path, b"good").expect("write backup bytes");
+
+        let corrupt_path =
+            recover_from_backup(&vault_path, &backup_path).expect("recover should succeed");
+
+        let restored = fs::read(&vault_path).expect("read restored vault");
+        assert_eq!(restored, b"good");
+        let corrupt_path = corrupt_path.expect("corrupt vault should be preserved");
+        let moved = fs::read(&corrupt_path).expect("read moved corrupt vault");
+        assert_eq!(moved, b"corrupt");
+
+        let _ = fs::remove_dir_all(backup_dir);
+        let _ = fs::remove_file(corrupt_path);
         let _ = fs::remove_file(vault_path);
     }
 }

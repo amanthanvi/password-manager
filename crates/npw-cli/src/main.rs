@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
@@ -13,7 +13,9 @@ use npw_core::{
     VaultItem, VaultPayload, create_vault_file, decode_base32_secret, generate_totp,
     parse_otpauth_uri, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
 };
-use npw_storage::{StorageError, read_vault, write_vault};
+use npw_storage::{
+    BackupEntry, StorageError, list_backups, read_vault, recover_from_backup, write_vault,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -89,6 +91,7 @@ enum Command {
         command: ItemCommand,
     },
     Totp(TotpArgs),
+    Recover(RecoverArgs),
     Search(SearchArgs),
     Config {
         #[command(subcommand)]
@@ -131,6 +134,13 @@ struct VaultPathArgs {
 struct SearchArgs {
     path: Option<PathBuf>,
     query: String,
+}
+
+#[derive(Debug, Args)]
+struct RecoverArgs {
+    path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    auto: bool,
 }
 
 #[derive(Debug, Args)]
@@ -455,6 +465,7 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
         },
         Command::Item { command } => handle_item_command(cli, &config, command),
         Command::Totp(args) => handle_totp(cli, &config, args),
+        Command::Recover(args) => handle_recover(cli, &config, args),
         Command::Search(args) => handle_search(cli, &config, args),
         Command::Config { command } => handle_config(command, &mut config, &config_path),
         Command::Generate(args) => handle_generate(args),
@@ -865,6 +876,99 @@ fn handle_totp(cli: &Cli, config: &AppConfig, args: &TotpArgs) -> Result<Command
             "seconds_remaining": remaining
         }),
     })
+}
+
+fn handle_recover(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &RecoverArgs,
+) -> Result<CommandOutput, CliError> {
+    let path = resolve_vault_path(cli, config, args.path.clone())?;
+    let backups = list_backups(&path).map_err(map_storage_error)?;
+    if backups.is_empty() {
+        return Err(CliError::usage(format!(
+            "no backups found for {}",
+            path.display()
+        )));
+    }
+
+    let mut valid_backups = Vec::new();
+    for backup in backups {
+        let bytes = read_vault(&backup.path).map_err(map_storage_error)?;
+        if let Ok(header) = parse_vault_header(&bytes) {
+            valid_backups.push((backup, header));
+        }
+    }
+    if valid_backups.is_empty() {
+        return Err(CliError {
+            code: CliExitCode::CorruptOrParse,
+            kind: "no_valid_backups",
+            message: "no valid backups found for recovery".to_owned(),
+        });
+    }
+
+    let selected_index = if args.auto {
+        0
+    } else {
+        if cli.non_interactive {
+            return Err(CliError::usage(
+                "--non-interactive requires --auto for `npw recover`",
+            ));
+        }
+        prompt_recovery_selection(&path, &valid_backups)?
+    };
+    let (selected_backup, selected_header) = &valid_backups[selected_index];
+    let corrupt_path =
+        recover_from_backup(&path, &selected_backup.path).map_err(map_storage_error)?;
+
+    Ok(CommandOutput {
+        message: format!(
+            "Recovered vault from backup {}",
+            selected_backup.path.display()
+        ),
+        payload: json!({
+            "path": path,
+            "restored_from": selected_backup.path,
+            "backup_timestamp": selected_backup.timestamp,
+            "backup_item_count": selected_header.item_count,
+            "backup_label": selected_header.vault_label,
+            "auto": args.auto,
+            "corrupt_path": corrupt_path
+        }),
+    })
+}
+
+fn prompt_recovery_selection(
+    vault_path: &Path,
+    valid_backups: &[(BackupEntry, npw_core::VaultHeader)],
+) -> Result<usize, CliError> {
+    println!("Recovery candidates for {}:", vault_path.display());
+    for (index, (backup, header)) in valid_backups.iter().enumerate() {
+        println!(
+            "  {}. {} (timestamp={}, items={}, label='{}')",
+            index + 1,
+            backup.path.display(),
+            backup.timestamp,
+            header.item_count,
+            header.vault_label
+        );
+    }
+
+    print!("Select backup to restore [1-{}]: ", valid_backups.len());
+    io::stdout().flush().map_err(map_io_error)?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).map_err(map_io_error)?;
+    let parsed = input
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| CliError::usage("backup selection must be a positive integer"))?;
+    if parsed == 0 || parsed > valid_backups.len() {
+        return Err(CliError::usage(format!(
+            "backup selection must be between 1 and {}",
+            valid_backups.len()
+        )));
+    }
+    Ok(parsed - 1)
 }
 
 fn load_vault_payload(
