@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os_id }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            os_id: linux
+            arch: x64
+            desktop_args: "--linux AppImage deb --x64"
+            cli_archive: tar.gz
+          - os: windows-latest
+            os_id: win
+            arch: x64
+            desktop_args: "--win nsis --x64"
+            cli_archive: zip
+          - os: macos-latest
+            os_id: mac
+            arch: arm64
+            desktop_args: "--mac dmg --arm64"
+            cli_archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 23
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag version matches manifests
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          ROOT_VERSION="$(node -e \"console.log(require('./package.json').version)\")"
+          DESKTOP_VERSION="$(node -e \"console.log(require('./apps/desktop/package.json').version)\")"
+          if [ \"$VERSION\" != \"$ROOT_VERSION\" ] || [ \"$VERSION\" != \"$DESKTOP_VERSION\" ]; then
+            echo \"Tag version ($VERSION) must match package.json versions ($ROOT_VERSION, $DESKTOP_VERSION).\" >&2
+            exit 1
+          fi
+
+      - name: Build desktop packages
+        run: pnpm --filter desktop dist -- ${{ matrix.desktop_args }}
+
+      - name: Build CLI
+        run: cargo build -p npw-cli --release --locked
+
+      - name: Package CLI (tar.gz)
+        if: matrix.cli_archive == 'tar.gz'
+        shell: bash
+        run: |
+          VERSION="$(node -e \"console.log(require('./package.json').version)\")"
+          ARCHIVE="npw-cli-${VERSION}-${{ matrix.os_id }}-${{ matrix.arch }}.tar.gz"
+          tar -C target/release -czf "$ARCHIVE" npw
+
+      - name: Package CLI (zip)
+        if: matrix.cli_archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = node -e "console.log(require('./package.json').version)"
+          $archive = "npw-cli-$version-${{ matrix.os_id }}-${{ matrix.arch }}.zip"
+          New-Item -ItemType Directory -Force -Path "cli-dist" | Out-Null
+          Copy-Item "target/release/npw.exe" "cli-dist/npw.exe" -Force
+          Compress-Archive -Path "cli-dist/npw.exe" -DestinationPath $archive -Force
+
+      - name: Collect release artifacts
+        shell: bash
+        run: |
+          mkdir -p release
+          shopt -s nullglob
+          cp -v apps/desktop/dist-packages/*.{dmg,exe,AppImage,deb} release/ || true
+          cp -v npw-cli-* release/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os_id }}
+          path: release/*
+
+  checksums:
+    name: Checksums + publish
+    needs: [build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist/release
+          find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+
+      - name: Sign checksums (optional)
+        if: ${{ secrets.NPW_GPG_PRIVATE_KEY != '' && secrets.NPW_GPG_PASSPHRASE != '' }}
+        run: |
+          echo "${{ secrets.NPW_GPG_PRIVATE_KEY }}" | gpg --batch --import
+          gpg --batch --yes --pinentry-mode loopback --passphrase "${{ secrets.NPW_GPG_PASSPHRASE }}" --armor --detach-sign dist/release/SHA256SUMS.txt
+
+      - name: Upload checksums artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/release/SHA256SUMS.txt*
+
+      - name: Upload assets to GitHub release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/release/**/*
+            dist/release/SHA256SUMS.txt
