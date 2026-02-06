@@ -1997,13 +1997,18 @@
               <p class="muted">
                 Preview loaded ({importPreview.importType}) from <span class="mono">{importInputPath}</span>
               </p>
-              <p class="muted">
-                {importPreview.candidates} candidates · {importPreview.duplicates.length} duplicates
-              </p>
+              <div class="import-stats">
+                <span class="chip" data-tone="neutral">{importPreview.candidates} candidates</span>
+                <span class="chip" data-tone={importPreview.duplicates.length > 0 ? 'warn' : 'ok'}>
+                  {importPreview.duplicates.length} duplicates
+                </span>
+              </div>
 
               {#if importPreview.warnings && importPreview.warnings.length > 0}
                 <details>
-                  <summary>Warnings ({importPreview.warnings.length})</summary>
+                  <summary>
+                    <span class="chip" data-tone="warn">{importPreview.warnings.length} warnings</span>
+                  </summary>
                   <ul class="plain-list">
                     {#each importPreview.warnings as warning, index (index)}
                       <li class="muted">{warning}</li>
@@ -2894,6 +2899,124 @@
     gap: 0.85rem;
   }
 
+  .import-export-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+  }
+
+  .import-panel,
+  .export-panel {
+    display: grid;
+    gap: 0.85rem;
+    align-content: start;
+  }
+
+  .import-panel h3,
+  .export-panel h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+  }
+
+  .export-panel {
+    border-left: 1px solid var(--border);
+    padding-left: 1.25rem;
+  }
+
+  .import-preview {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.55);
+    animation: panel-in 180ms ease-out;
+  }
+
+  .import-stats {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .plain-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .duplicate-list {
+    display: grid;
+    gap: 0.5rem;
+    max-height: 24rem;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+  }
+
+  .duplicate {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.65rem;
+    align-items: center;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid rgba(11, 27, 38, 0.1);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.62);
+    transition: border-color 140ms ease;
+  }
+
+  .duplicate:hover {
+    border-color: rgba(11, 27, 38, 0.2);
+  }
+
+  .duplicate-meta {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  .duplicate-meta strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .duplicate-meta .muted {
+    font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .duplicate-actions {
+    display: flex;
+    gap: 0.55rem;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .duplicate-actions label.inline {
+    font-size: 0.82rem;
+    font-weight: 600;
+    gap: 0.3rem;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 1100px) {
+    .import-export-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .export-panel {
+      border-left: none;
+      padding-left: 0;
+      border-top: 1px solid var(--border);
+      padding-top: 1rem;
+    }
+  }
+
   .picker h2,
   .settings h2,
   .vault h2,
@@ -3148,6 +3271,26 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  @keyframes backdrop-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes modal-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97) translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
     }
   }
 
@@ -3448,6 +3591,7 @@
     justify-content: center;
     padding: 1rem;
     z-index: 1000;
+    animation: backdrop-in 160ms ease-out;
   }
 
   .modal {
@@ -3457,11 +3601,17 @@
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 1rem;
+    padding: 1.35rem;
     box-shadow: var(--shadow-lg);
     display: grid;
     gap: 0.85rem;
     backdrop-filter: blur(12px);
+    animation: modal-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .modal h2 {
+    margin: 0;
+    font-size: 1.1rem;
   }
 
   .totp-import {
@@ -3472,6 +3622,10 @@
   .totp-import-preview {
     display: grid;
     gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: rgba(11, 27, 38, 0.03);
   }
 
   .camera {
@@ -3479,7 +3633,8 @@
     aspect-ratio: 4 / 3;
     background: rgba(11, 27, 38, 0.92);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
+    object-fit: cover;
   }
 
   .backup-list {
