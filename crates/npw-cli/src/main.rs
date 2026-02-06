@@ -151,6 +151,7 @@ enum PasskeyCommand {
 #[derive(Debug, Subcommand)]
 enum ImportCommand {
     Csv(ImportCsvArgs),
+    BitwardenJson(ImportBitwardenArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -197,6 +198,15 @@ struct ImportCsvArgs {
 }
 
 #[derive(Debug, Args)]
+struct ImportBitwardenArgs {
+    input: PathBuf,
+    #[arg(long)]
+    path: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = DuplicatePolicyArg::Skip)]
+    duplicate: DuplicatePolicyArg,
+}
+
+#[derive(Debug, Args)]
 struct ExportArgs {
     output: PathBuf,
     #[arg(long)]
@@ -214,6 +224,35 @@ struct ExportEncryptedArgs {
     path: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
     redacted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenExport {
+    #[serde(default)]
+    items: Vec<BitwardenItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenItem {
+    #[serde(default)]
+    r#type: u8,
+    #[serde(default)]
+    name: String,
+    notes: Option<String>,
+    login: Option<BitwardenLogin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenLogin {
+    username: Option<String>,
+    password: Option<String>,
+    totp: Option<String>,
+    uris: Option<Vec<BitwardenLoginUri>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenLoginUri {
+    uri: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -911,6 +950,7 @@ fn handle_import_command(
 ) -> Result<CommandOutput, CliError> {
     match command {
         ImportCommand::Csv(args) => handle_import_csv(cli, config, args),
+        ImportCommand::BitwardenJson(args) => handle_import_bitwarden_json(cli, config, args),
     }
 }
 
@@ -1093,6 +1133,202 @@ fn handle_import_csv(
     Ok(CommandOutput {
         message: format!(
             "Imported {} rows from {} (skipped {}, overwritten {})",
+            imported,
+            args.input.display(),
+            skipped,
+            overwritten
+        ),
+        payload: json!({
+            "path": path,
+            "input": args.input,
+            "imported": imported,
+            "skipped": skipped,
+            "overwritten": overwritten,
+            "warnings": warnings
+        }),
+    })
+}
+
+fn handle_import_bitwarden_json(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ImportBitwardenArgs,
+) -> Result<CommandOutput, CliError> {
+    let now = unix_seconds_now();
+    let (path, password, unlocked, mut payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let raw = std::fs::read(&args.input).map_err(map_io_error)?;
+    let export: BitwardenExport = serde_json::from_slice(&raw).map_err(|error| CliError {
+        code: CliExitCode::CorruptOrParse,
+        kind: "bitwarden_json_parse_failed",
+        message: error.to_string(),
+    })?;
+
+    let mut warnings = Vec::new();
+    let mut login_index = build_login_duplicate_index(&payload);
+    let mut imported = 0_u32;
+    let mut skipped = 0_u32;
+    let mut overwritten = 0_u32;
+
+    for (index, item) in export.items.into_iter().enumerate() {
+        let title = item.name.trim().to_owned();
+        if title.is_empty() {
+            skipped += 1;
+            warnings.push(format!(
+                "item {} skipped: missing required `name` field",
+                index + 1
+            ));
+            continue;
+        }
+
+        match item.r#type {
+            1 => {
+                let login = if let Some(login) = item.login {
+                    login
+                } else {
+                    skipped += 1;
+                    warnings.push(format!(
+                        "item {} skipped: type=1 but missing `login` object",
+                        index + 1
+                    ));
+                    continue;
+                };
+
+                let username = normalize_optional_cell(login.username.as_deref());
+                let password_field = normalize_optional_cell(login.password.as_deref());
+                let primary_url = login.uris.as_ref().and_then(|uris| {
+                    uris.iter()
+                        .find_map(|entry| normalize_optional_cell(entry.uri.as_deref()))
+                });
+                let notes = normalize_optional_cell(item.notes.as_deref());
+                let urls = primary_url
+                    .clone()
+                    .map(|value| {
+                        vec![UrlEntry {
+                            url: value,
+                            match_type: UrlMatchType::Exact,
+                        }]
+                    })
+                    .unwrap_or_default();
+
+                let totp = if let Some(raw_totp) = normalize_optional_cell(login.totp.as_deref()) {
+                    if raw_totp.starts_with("otpauth://") {
+                        match parse_otpauth_uri(&raw_totp) {
+                            Ok(config) => Some(config),
+                            Err(error) => {
+                                warnings.push(format!(
+                                    "item {} ignored invalid `login.totp` URI ({})",
+                                    index + 1,
+                                    error
+                                ));
+                                None
+                            }
+                        }
+                    } else {
+                        match decode_base32_secret(&raw_totp) {
+                            Ok(seed) => Some(TotpConfig {
+                                seed,
+                                issuer: None,
+                                algorithm: TotpAlgorithm::SHA1,
+                                digits: 6,
+                                period: 30,
+                            }),
+                            Err(error) => {
+                                warnings.push(format!(
+                                    "item {} ignored invalid `login.totp` secret ({})",
+                                    index + 1,
+                                    error
+                                ));
+                                None
+                            }
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let key = login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
+                if let Some(existing_id) = login_index.get(&key).cloned() {
+                    match args.duplicate {
+                        DuplicatePolicyArg::Skip => {
+                            skipped += 1;
+                            continue;
+                        }
+                        DuplicatePolicyArg::Overwrite => {
+                            if let Some(VaultItem::Login(existing)) = payload
+                                .items
+                                .iter_mut()
+                                .find(|item| item.id() == existing_id)
+                            {
+                                existing.title = title.clone();
+                                existing.urls = urls;
+                                existing.username = username;
+                                existing.password = password_field;
+                                existing.totp = totp;
+                                existing.notes = notes;
+                                existing.tags = Vec::new();
+                                existing.favorite = false;
+                                existing.updated_at = now;
+                                overwritten += 1;
+                                continue;
+                            }
+                        }
+                        DuplicatePolicyArg::KeepBoth => {}
+                    }
+                }
+
+                let item = VaultItem::Login(LoginItem {
+                    id: Uuid::new_v4().to_string(),
+                    title,
+                    urls,
+                    username,
+                    password: password_field,
+                    totp,
+                    notes,
+                    tags: Vec::new(),
+                    favorite: false,
+                    created_at: now,
+                    updated_at: now,
+                });
+                let item_id = item.id().to_owned();
+                payload.add_item(item, now).map_err(map_model_error)?;
+                login_index.insert(key, item_id);
+                imported += 1;
+            }
+            2 => {
+                let item = VaultItem::Note(NoteItem {
+                    id: Uuid::new_v4().to_string(),
+                    title,
+                    body: item.notes.unwrap_or_default(),
+                    tags: Vec::new(),
+                    favorite: false,
+                    created_at: now,
+                    updated_at: now,
+                });
+                payload.add_item(item, now).map_err(map_model_error)?;
+                imported += 1;
+            }
+            other => {
+                skipped += 1;
+                warnings.push(format!(
+                    "item {} skipped: unsupported Bitwarden item type `{other}`",
+                    index + 1
+                ));
+            }
+        }
+    }
+
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!(
+            "Imported {} Bitwarden items from {} (skipped {}, overwritten {})",
             imported,
             args.input.display(),
             skipped,
