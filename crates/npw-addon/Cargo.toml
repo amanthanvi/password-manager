@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 data-encoding.workspace = true
 directories.workspace = true
+getrandom.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
 npw-core = { path = "../npw-core" }

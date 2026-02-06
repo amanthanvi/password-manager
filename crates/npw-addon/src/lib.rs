@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use data_encoding::BASE32_NOPAD;
@@ -558,6 +559,37 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn login_generate_and_replace_password(&mut self, id: String) -> Result<String> {
+        let now = unix_seconds_now();
+        let index = self
+            .payload
+            .items
+            .iter()
+            .position(|item| item.id() == id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+
+        let VaultItem::Login(login) = &mut self.payload.items[index] else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+
+        let (app_config, _config_path) =
+            crate::config::load_config(None).map_err(|error| error_to_napi(error.to_string()))?;
+        let (password, mode_label) = generate_password_from_config(&app_config.generator)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+
+        login.password = Some(password);
+        login.updated_at = now;
+        login
+            .validate()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.payload.updated_at = now;
+        self.payload.rebuild_search_index();
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(mode_label.to_owned())
+    }
+
+    #[napi]
     pub fn delete_item(&mut self, id: String) -> Result<bool> {
         let now = unix_seconds_now();
         let deleted = self.payload.soft_delete_item(&id, now);
@@ -628,6 +660,120 @@ fn totp_algorithm_name(algorithm: npw_core::TotpAlgorithm) -> &'static str {
         npw_core::TotpAlgorithm::SHA256 => "SHA256",
         npw_core::TotpAlgorithm::SHA512 => "SHA512",
     }
+}
+
+fn generate_password_from_config(
+    generator: &crate::config::GeneratorConfig,
+) -> std::result::Result<(String, &'static str), String> {
+    match generator.default_mode {
+        crate::config::GenerateMode::Charset => {
+            generate_charset_password(generator).map(|password| (password, "charset"))
+        }
+        crate::config::GenerateMode::Diceware => {
+            generate_diceware_password(generator).map(|password| (password, "diceware"))
+        }
+    }
+}
+
+fn generate_charset_password(
+    generator: &crate::config::GeneratorConfig,
+) -> std::result::Result<String, String> {
+    let length = generator.charset_length;
+    if !(8..=128).contains(&length) {
+        return Err(format!(
+            "generator.charset_length out of bounds: {length} (expected 8..=128)"
+        ));
+    }
+
+    let mut alphabet = String::new();
+    if generator.charset_lowercase {
+        alphabet.push_str("abcdefghijklmnopqrstuvwxyz");
+    }
+    if generator.charset_uppercase {
+        alphabet.push_str("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    }
+    if generator.charset_digits {
+        alphabet.push_str("0123456789");
+    }
+    if generator.charset_symbols {
+        alphabet.push_str("!@#$%^&*()-_=+[]{};:,.<>?/|");
+    }
+
+    if generator.charset_avoid_ambiguous {
+        alphabet = alphabet
+            .chars()
+            .filter(|character| !matches!(*character, '0' | 'O' | 'o' | '1' | 'l' | 'I'))
+            .collect();
+    }
+
+    if alphabet.is_empty() {
+        return Err("charset generation needs at least one enabled character set".to_owned());
+    }
+
+    let chars: Vec<char> = alphabet.chars().collect();
+    let mut output = String::with_capacity(length);
+    for _ in 0..length {
+        let index = sample_index(chars.len())?;
+        output.push(chars[index]);
+    }
+    Ok(output)
+}
+
+fn generate_diceware_password(
+    generator: &crate::config::GeneratorConfig,
+) -> std::result::Result<String, String> {
+    let words_to_generate = generator.diceware_words;
+    if !(4..=10).contains(&words_to_generate) {
+        return Err(format!(
+            "generator.diceware_words out of bounds: {words_to_generate} (expected 4..=10)"
+        ));
+    }
+
+    let separator = generator
+        .diceware_separator
+        .chars()
+        .next()
+        .ok_or_else(|| "generator.diceware_separator is required".to_owned())?;
+    let wordlist = diceware_words();
+    let mut words = Vec::with_capacity(words_to_generate);
+    for _ in 0..words_to_generate {
+        words.push(wordlist[sample_index(wordlist.len())?]);
+    }
+    Ok(words.join(&separator.to_string()))
+}
+
+fn sample_index(limit: usize) -> std::result::Result<usize, String> {
+    if limit == 0 {
+        return Err("cannot sample from an empty collection".to_owned());
+    }
+
+    let max = u64::MAX - (u64::MAX % u64::try_from(limit).expect("limit should fit in u64"));
+    loop {
+        let mut bytes = [0_u8; 8];
+        getrandom::fill(&mut bytes).map_err(|_| "failed to generate random values".to_owned())?;
+        let candidate = u64::from_le_bytes(bytes);
+        if candidate < max {
+            return Ok(
+                (candidate % u64::try_from(limit).expect("limit should fit in u64")) as usize,
+            );
+        }
+    }
+}
+
+fn diceware_words() -> &'static [&'static str] {
+    static WORDS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    WORDS
+        .get_or_init(|| {
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../npw-cli/assets/eff_large_wordlist.txt"
+            ))
+            .lines()
+            .filter_map(|line| line.split_once('\t').map(|(_, word)| word.trim()))
+            .filter(|word| !word.is_empty())
+            .collect()
+        })
+        .as_slice()
 }
 
 #[napi]
