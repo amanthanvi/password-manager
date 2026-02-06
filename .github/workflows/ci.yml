@@ -83,3 +83,36 @@ jobs:
 
       - name: Coverage (npw-storage)
         run: cargo llvm-cov --package npw-storage --all-targets --summary-only --fail-under-lines 80
+
+  e2e:
+    name: E2E (desktop smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 23
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Build desktop
+        run: pnpm --filter desktop build
+
+      - name: Run desktop E2E smoke
+        run: xvfb-run -a pnpm --filter desktop e2e
