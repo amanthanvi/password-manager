@@ -1450,6 +1450,10 @@ No auto-update mechanism in v0.1.0. Users manually download new versions from th
     - GUI: platform-native signing (Windows Authenticode, macOS notarization).
 - Release page MUST publish SHA-256 checksums.
 
+Implementation note (v0.1.0): CI provides release workflow scaffolding that uploads artifacts + `SHA256SUMS.txt`.
+If `NPW_GPG_PRIVATE_KEY` and `NPW_GPG_PASSPHRASE` are configured, CI also uploads `SHA256SUMS.txt.asc`.
+Desktop signing/notarization is performed by `electron-builder` when the appropriate signing secrets are configured.
+
 ### P4. SBOM generation
 
 - Releases MUST include SBOMs:
