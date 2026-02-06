@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "btca-local": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["btca", "mcp"]
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  // btca project configuration — committed to repo.
+  // Auth is per-device: run `btca connect` on each new machine.
+  "$schema": "https://unpkg.com/btca/btca.schema.json",
+  // Default provider and model for local queries.
+  // Override per-device via `btca connect -p <provider> -m <model>`.
+  "provider": "opencode",
+  "model": "claude-ops-4-6",
+  // Resources relevant to the npw password manager project.
+  // These repos are cloned locally on first query.
+  "resources": [
+    {
+      "name": "svelte",
+      "type": "git",
+      "url": "https://github.com/sveltejs/svelte",
+      "branch": "main",
+      "notes": "GUI renderer framework (Electron + Svelte)"
+    },
+    {
+      "name": "electron",
+      "type": "git",
+      "url": "https://github.com/electron/electron",
+      "branch": "main",
+      "searchPaths": [
+        "docs"
+      ],
+      "notes": "Desktop platform — focus on docs/ for API reference"
+    },
+    {
+      "name": "napi-rs",
+      "type": "git",
+      "url": "https://github.com/napi-rs/napi-rs",
+      "branch": "main",
+      "notes": "Rust N-API bindings for Electron main process addon"
+    },
+    {
+      "name": "rustcrypto-password-hashes",
+      "type": "git",
+      "url": "https://github.com/RustCrypto/password-hashes",
+      "branch": "master",
+      "searchPaths": [
+        "argon2"
+      ],
+      "notes": "Argon2id KDF implementation"
+    },
+    {
+      "name": "rustcrypto-aeads",
+      "type": "git",
+      "url": "https://github.com/RustCrypto/AEADs",
+      "branch": "master",
+      "searchPaths": [
+        "chacha20poly1305"
+      ],
+      "notes": "XChaCha20-Poly1305 AEAD implementation"
+    }
+  ]
+}
