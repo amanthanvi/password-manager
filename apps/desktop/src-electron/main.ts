@@ -145,6 +145,7 @@ type VaultSession = {
   lock: () => void
   getLogin: (id: string) => LoginDetail
   getLoginPassword: (id: string) => string
+  loginGenerateAndReplacePassword: (id: string) => string
   getLoginTotp: (id: string) => TotpCode
   getLoginTotpQrSvg: (id: string) => string
   getNote: (id: string) => NoteDetail
@@ -459,6 +460,14 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     return session.getLoginPassword(safeId)
+  })
+
+  ipcMain.handle('item.login.generate-replace-password', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.loginGenerateAndReplacePassword(safeId)
   })
 
   ipcMain.handle('item.login.totp.get', (_event, payload: { id: string }) => {

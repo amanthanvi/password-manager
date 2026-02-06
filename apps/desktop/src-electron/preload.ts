@@ -170,6 +170,8 @@ contextBridge.exposeInMainWorld('npw', {
     ipcRenderer.invoke('item.login.copy-password', payload),
   loginRevealPassword: (payload: { id: string }): Promise<string> =>
     ipcRenderer.invoke('item.login.reveal-password', payload),
+  loginGenerateReplacePassword: (payload: { id: string }): Promise<string> =>
+    ipcRenderer.invoke('item.login.generate-replace-password', payload),
   loginTotpGet: (payload: { id: string }): Promise<TotpCode> => ipcRenderer.invoke('item.login.totp.get', payload),
   loginTotpQrSvg: (payload: { id: string }): Promise<string> => ipcRenderer.invoke('item.login.totp.qr-svg', payload),
   loginCopyTotp: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.login.copy-totp', payload),
