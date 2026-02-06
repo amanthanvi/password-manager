@@ -1626,7 +1626,7 @@ fn vault_id_hex_nibble(value: u8) -> Result<u8> {
 
 fn quick_unlock_service_name(vault_id_hex: &str) -> String {
     let prefix = vault_id_hex.get(0..8).unwrap_or(vault_id_hex);
-    format!("npw Vault Key ({prefix})")
+    format!("npw Quick Unlock ({prefix})")
 }
 
 fn quick_unlock_entry(vault_id_hex: &str) -> std::result::Result<Entry, keyring::Error> {

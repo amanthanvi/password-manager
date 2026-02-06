@@ -130,6 +130,13 @@ declare global {
     warnings: string[]
   }
 
+  interface QuickUnlockStatus {
+    available: boolean
+    configured: boolean
+    enabled: boolean
+    error: string | null
+  }
+
   interface Window {
     npw: {
       coreBanner: () => Promise<string>
@@ -150,9 +157,14 @@ declare global {
       vaultBackupsList: (payload: { path: string }) => Promise<{ path: string; timestamp: number; itemCount: number; label: string }[]>
       vaultRecoverFromBackup: (payload: { path: string; backupPath: string }) => Promise<{ corruptPath: string | null }>
       vaultUnlock: (payload: { path: string; masterPassword: string }) => Promise<VaultStatus>
+      vaultUnlockQuick: (payload: { path: string }) => Promise<VaultStatus>
       vaultLock: () => Promise<boolean>
       configLoad: () => Promise<AppConfig>
       configSet: (payload: { key: string; value: string }) => Promise<AppConfig>
+      quickUnlockStatusForPath: (payload: { path: string }) => Promise<QuickUnlockStatus>
+      quickUnlockStatusCurrent: () => Promise<QuickUnlockStatus>
+      quickUnlockEnable: () => Promise<boolean>
+      quickUnlockDisable: () => Promise<boolean>
       importCsvPreview: (payload: { inputPath: string }) => Promise<ImportPreview>
       importCsvApply: (payload: { inputPath: string; decisions: ImportDuplicateDecision[] }) => Promise<ImportResult>
       importBitwardenPreview: (payload: { inputPath: string }) => Promise<ImportPreview>

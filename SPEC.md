@@ -1181,9 +1181,11 @@ All vault operation errors (write failures, corrupt backups, lock contention) us
 
 ### L0. OS keychain usage — DECIDED
 
-**Decision: Opt-in Quick Unlock storing `vault_key` in OS keychain; OFF by default.**
+**Decision: Opt-in Quick Unlock storing `kek` (the envelope key-encryption key) in OS keychain; OFF by default.**
 
-Store **`vault_key`** (32 bytes) in OS keychain to allow "Quick Unlock". This preserves offline protection of the vault file when keychain is unavailable (attacker with only file still faces Argon2id).
+Store **`kek`** (32 bytes) in OS keychain to allow "Quick Unlock" without re-running the Argon2id derivation on every unlock. This preserves offline protection of the vault file when keychain is unavailable (attacker with only file still faces Argon2id).
+
+Note: `kek` is derived from the master password + salt. If the master password is changed, the stored Quick Unlock key becomes invalid and Quick Unlock MUST be re-enabled for that vault.
 
 #### Decision matrix (historical)
 
@@ -1201,8 +1203,8 @@ Store **`vault_key`** (32 bytes) in OS keychain to allow "Quick Unlock". This pr
 #### Keychain integration requirements (v0.1.0)
 
 - Keychain entries MUST be per-vault, keyed by `vault_id`.
-- Stored secret: `vault_key` base64 (or raw bytes if API supports).
-- Label/metadata MUST NOT include sensitive user info; use `npw Vault Key (<vault_id_prefix>)`.
+- Stored secret: `kek` raw bytes (32 bytes) (or base64 if API supports).
+- Label/metadata MUST NOT include sensitive user info; use `npw Quick Unlock (<vault_id_prefix>)`.
 - Disabling Quick Unlock MUST delete the keychain entry.
 - If keychain is unavailable (e.g., Linux headless without Secret Service), the app MUST disable the toggle and explain.
 
@@ -1733,7 +1735,7 @@ Then the CLI MUST fail immediately with exit code 5
     - Rationale: security, performance, auditability, consistent crypto implementation.
     - See: [G0](#g0-crypto-core-language--decided), [I](#i-application-architecture)
 
-2. **OS keychain usage**: Opt-in Quick Unlock storing `vault_key` in OS keychain; OFF by default.
+2. **OS keychain usage**: Opt-in Quick Unlock storing `kek` (envelope key-encryption key) in OS keychain; OFF by default.
     - Rationale: convenience without storing master password; preserves file-only offline protection.
     - See: [L0](#l0-os-keychain-usage--decided)
 

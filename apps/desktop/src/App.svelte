@@ -6,6 +6,9 @@
   let vaultPath = '/tmp/npw-desktop.npw'
   let vaultLabel = 'Desktop Vault'
   let masterPassword = ''
+  let quickUnlockForPath = { available: true, configured: false, enabled: false, error: null }
+  let quickUnlockForCurrent = { available: true, configured: false, enabled: false, error: null }
+  let quickUnlockBusy = false
   let query = ''
   let bridgeStatus = 'initializing'
   let lastResult = ''
@@ -289,6 +292,9 @@
       recoverySelectedBackupPath = ''
       recoveryBusy = false
       recoveryError = ''
+      quickUnlockForCurrent = { available: true, configured: false, enabled: false, error: null }
+      quickUnlockBusy = false
+      void refreshQuickUnlockForPath()
       settingsError = ''
       clearRevealedPassword()
       lastResult = `Vault locked (${reason})`
@@ -353,6 +359,7 @@
       pushToast({ kind: 'success', title: 'Vault unlocked', timeoutMs: 3500 })
       await refreshRecents()
       await refreshItems()
+      await refreshQuickUnlockForCurrent()
     } catch (error) {
       const message = formatError(error)
       const shouldOfferRecovery =
@@ -378,6 +385,70 @@
         retryLabel: 'Retry',
         retry: unlockVault
       })
+    }
+  }
+
+  const quickUnlockVault = async () => {
+    quickUnlockBusy = true
+    try {
+      status = await window.npw.vaultUnlockQuick({ path: vaultPath })
+      masterPassword = ''
+      lastResult = `Vault quick-unlocked: ${status.path}`
+      pushToast({ kind: 'success', title: 'Vault quick-unlocked', timeoutMs: 3500 })
+      await refreshRecents()
+      await refreshItems()
+      await refreshQuickUnlockForCurrent()
+    } catch (error) {
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Quick Unlock failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: quickUnlockVault
+      })
+    } finally {
+      quickUnlockBusy = false
+    }
+  }
+
+  const setQuickUnlockEnabled = async (nextEnabled) => {
+    if (!status) {
+      return
+    }
+
+    quickUnlockBusy = true
+    try {
+      if (nextEnabled) {
+        const confirmed = confirm(
+          'Warning: Enabling Quick Unlock stores key material in your OS keychain. Anyone who can access your OS user session/keychain may unlock this vault without the master password. Enable Quick Unlock for this vault?'
+        )
+        if (!confirmed) {
+          return
+        }
+        await window.npw.quickUnlockEnable()
+        lastResult = 'Quick Unlock enabled'
+        pushToast({ kind: 'info', title: 'Quick Unlock enabled', timeoutMs: 3500 })
+      } else {
+        await window.npw.quickUnlockDisable()
+        lastResult = 'Quick Unlock disabled'
+        pushToast({ kind: 'info', title: 'Quick Unlock disabled', timeoutMs: 3500 })
+      }
+      await refreshQuickUnlockForCurrent()
+      await refreshQuickUnlockForPath()
+    } catch (error) {
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: nextEnabled ? 'Enable Quick Unlock failed' : 'Disable Quick Unlock failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: () => setQuickUnlockEnabled(nextEnabled)
+      })
+    } finally {
+      quickUnlockBusy = false
     }
   }
 
@@ -515,6 +586,9 @@
       newPasskeyBusy = false
       newPasskeyError = ''
       closeRecoveryWizard()
+      quickUnlockForCurrent = { available: true, configured: false, enabled: false, error: null }
+      quickUnlockBusy = false
+      await refreshQuickUnlockForPath()
       clearRevealedPassword()
       lastResult = 'Vault locked'
       pushToast({ kind: 'info', title: 'Vault locked', timeoutMs: 3500 })
@@ -533,6 +607,32 @@
 
   const refreshRecents = async () => {
     recents = await window.npw.vaultRecentsList()
+    await refreshQuickUnlockForPath()
+  }
+
+  const refreshQuickUnlockForPath = async () => {
+    const safePath = vaultPath.trim()
+    if (safePath.length === 0) {
+      quickUnlockForPath = { available: true, configured: false, enabled: false, error: null }
+      return
+    }
+    try {
+      quickUnlockForPath = await window.npw.quickUnlockStatusForPath({ path: safePath })
+    } catch (error) {
+      quickUnlockForPath = { available: false, configured: false, enabled: false, error: formatError(error) }
+    }
+  }
+
+  const refreshQuickUnlockForCurrent = async () => {
+    if (!status) {
+      quickUnlockForCurrent = { available: true, configured: false, enabled: false, error: null }
+      return
+    }
+    try {
+      quickUnlockForCurrent = await window.npw.quickUnlockStatusCurrent()
+    } catch (error) {
+      quickUnlockForCurrent = { available: false, configured: true, enabled: false, error: formatError(error) }
+    }
   }
 
   const refreshConfig = async () => {
@@ -607,6 +707,7 @@
       vaultLabel = vault.label
     }
     lastResult = `Selected vault: ${vault.path}`
+    void refreshQuickUnlockForPath()
   }
 
   const removeRecent = async (vault) => {
@@ -630,6 +731,7 @@
       }
       vaultPath = picked
       lastResult = `Selected vault: ${picked}`
+      await refreshQuickUnlockForPath()
     } catch (error) {
       const message = formatError(error)
       lastResult = message
@@ -645,6 +747,7 @@
       }
       vaultPath = picked
       lastResult = `Selected new vault path: ${picked}`
+      await refreshQuickUnlockForPath()
     } catch (error) {
       const message = formatError(error)
       lastResult = message
@@ -1661,7 +1764,7 @@
 
   <label>
     Vault path
-    <input bind:value={vaultPath} />
+    <input bind:value={vaultPath} on:blur={refreshQuickUnlockForPath} />
   </label>
 
   <label>
@@ -1677,8 +1780,45 @@
   <div class="actions">
     <button on:click={createVault}>Create Vault</button>
     <button on:click={unlockVault}>Unlock Vault</button>
+    {#if !status && quickUnlockForPath.configured}
+      <button
+        class="secondary"
+        type="button"
+        on:click={quickUnlockVault}
+        disabled={quickUnlockBusy || !quickUnlockForPath.available || !quickUnlockForPath.enabled}
+      >
+        Quick Unlock
+      </button>
+    {/if}
     <button on:click={lockVault} disabled={!status}>Lock Vault</button>
   </div>
+
+  {#if !status && quickUnlockForPath.error}
+    <p class="callout">{quickUnlockForPath.error}</p>
+  {/if}
+
+  {#if status}
+    <section class="quick-unlock">
+      <h2>Quick Unlock (OS keychain)</h2>
+      <p class="muted">
+        Store key material in your OS keychain so this vault can be unlocked without the master password.
+      </p>
+      <label class="inline">
+        <input
+          type="checkbox"
+          checked={quickUnlockForCurrent.enabled}
+          on:change={(event) => setQuickUnlockEnabled(event.currentTarget.checked)}
+          disabled={quickUnlockBusy || !quickUnlockForCurrent.available}
+        />
+        Enable Quick Unlock for this vault
+      </label>
+      {#if quickUnlockForCurrent.error}
+        <p class="callout">{quickUnlockForCurrent.error}</p>
+      {:else if !quickUnlockForCurrent.available}
+        <p class="callout">Quick Unlock is unavailable on this system.</p>
+      {/if}
+    </section>
+  {/if}
 
   <label>
     Search
@@ -2499,6 +2639,19 @@
     gap: 0.75rem;
     grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
     align-items: start;
+  }
+
+  .quick-unlock {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #93a8b5;
+    border-radius: 0.75rem;
+    background: #f4fbff;
+  }
+
+  .quick-unlock h2 {
+    margin: 0;
   }
 
   .import-preview {
