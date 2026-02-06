@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
+const isE2E = process.env.NPW_E2E === '1' || process.argv.includes('--npw-e2e')
 const require = createRequire(import.meta.url)
 
 const DEFAULT_CLIPBOARD_CLEAR_SECONDS = 30
@@ -294,18 +295,18 @@ const createWindow = () => {
     width: 1200,
     height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
     }
   })
 
-  if (!isDev) {
+  if (!isDev || isE2E) {
     applyProductionSecurityPolicy(win)
   }
 
-  if (isDev) {
+  if (isDev && !isE2E) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173')
     return
   }

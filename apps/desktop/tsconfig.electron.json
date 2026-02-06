@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": false
   },
-  "include": ["src-electron/**/*.ts"]
+  "include": ["src-electron/**/*.ts", "src-electron/**/*.cts"]
 }
