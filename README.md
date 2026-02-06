@@ -16,3 +16,9 @@ Local-first password manager with a Rust core/CLI and Electron + Svelte desktop 
 - `pnpm run test`
 - `pnpm run build`
 - `pnpm run check`
+
+## Docs
+
+- Contributor guide: `CONTRIBUTING.md`
+- Security policy: `SECURITY.md`
+- User docs: `docs/getting-started.md`

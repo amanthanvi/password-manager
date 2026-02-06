@@ -8,6 +8,9 @@
     "typecheck": "pnpm --filter desktop typecheck && cargo check --workspace --all-targets",
     "test": "pnpm --filter desktop test && cargo test --workspace --all-targets",
     "build": "pnpm --filter desktop build && cargo build --workspace --all-targets",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
+    "audit": "cargo audit && pnpm audit --audit-level=high",
+    "sbom:rust": "cargo cyclonedx --all --format json --override-filename sbom-rust",
+    "sbom:npm": "pnpm dlx @cyclonedx/cdxgen -o sbom-npm.cdx.json --type npm"
   }
 }

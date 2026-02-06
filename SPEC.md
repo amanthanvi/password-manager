@@ -1863,6 +1863,10 @@ Then the CLI MUST fail immediately with exit code 5
 36. **Acceptance criteria format**: Given/When/Then for top 5 complex flows + testable checklist for everything else.
     - See: [S](#s-acceptance-criteria-v010)
 
+37. **Desktop addon packaging (implementation note)**: During development/CI, build `npw-addon` via Cargo and copy the compiled shared library to `apps/desktop/native/npw-addon.node` for Electron main-process loading.
+    - Rationale: keeps Electron↔Rust bridge explicit and reproducible without introducing a separate packaging system in early milestones.
+    - See: [I](#i-application-architecture)
+
 ---
 
 ## V. Security Defaults Summary (One Page)

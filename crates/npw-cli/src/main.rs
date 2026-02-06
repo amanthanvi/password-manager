@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -855,9 +856,10 @@ fn generate_charset(args: &GenerateArgs) -> Result<String, CliError> {
 }
 
 fn generate_diceware(args: &GenerateArgs) -> Result<String, CliError> {
+    let wordlist = diceware_words();
     let mut words = Vec::with_capacity(args.words);
     for _ in 0..args.words {
-        words.push(DICEWARE_WORDS[sample_index(DICEWARE_WORDS.len())?]);
+        words.push(wordlist[sample_index(wordlist.len())?]);
     }
 
     let separator = args
@@ -900,16 +902,15 @@ fn sample_index(limit: usize) -> Result<usize, CliError> {
     }
 }
 
-const DICEWARE_WORDS: &[&str] = &[
-    "acorn", "anchor", "anthem", "apricot", "aurora", "badger", "bamboo", "beacon", "beetle",
-    "bison", "blossom", "boulder", "brisk", "breeze", "bronze", "cactus", "canary", "canyon",
-    "carbon", "cedar", "chisel", "cinder", "cobalt", "comet", "copper", "crater", "crisp",
-    "crystal", "dahlia", "delta", "denim", "drift", "dynamo", "ember", "falcon", "feather", "fern",
-    "flint", "fossil", "frost", "galaxy", "garden", "glacier", "granite", "harbor", "hazel",
-    "horizon", "indigo", "island", "ivy", "jungle", "kelp", "lantern", "lava", "legacy", "lotus",
-    "magnet", "maple", "meadow", "meteor", "mint", "mirage", "nebula", "nickel", "oak", "onyx",
-    "orbit", "orchid", "otter", "owl", "pearl", "petal", "phoenix", "pine", "planet", "plume",
-    "prairie", "quartz", "raven", "reef", "ripple", "river", "robin", "saffron", "sail", "scarlet",
-    "shadow", "silver", "slate", "solstice", "spruce", "stone", "sunset", "thunder", "timber",
-    "topaz", "trail", "tulip", "valley", "velvet", "violet", "willow", "winter", "zephyr",
-];
+fn diceware_words() -> &'static [&'static str] {
+    static WORDS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    WORDS
+        .get_or_init(|| {
+            include_str!("../assets/eff_large_wordlist.txt")
+                .lines()
+                .filter_map(|line| line.split_once('\t').map(|(_, word)| word.trim()))
+                .filter(|word| !word.is_empty())
+                .collect()
+        })
+        .as_slice()
+}

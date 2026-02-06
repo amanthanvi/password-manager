@@ -45,3 +45,5 @@ Thumbs.db
 coverage/
 lcov.info
 tarpaulin-report.html
+sbom-npm.cdx.json
+**/sbom-rust.json

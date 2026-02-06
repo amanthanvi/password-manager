@@ -1,0 +1,49 @@
+name: SBOM
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install CycloneDX generators
+        run: |
+          cargo install cargo-cyclonedx --locked
+          pnpm dlx @cyclonedx/cdxgen --version
+
+      - name: Generate Rust SBOM
+        run: cargo cyclonedx --all --format json --override-filename sbom-rust
+
+      - name: Generate npm SBOM
+        run: pnpm dlx @cyclonedx/cdxgen -o sbom-npm.cdx.json --type npm
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            **/sbom-rust.json
+            sbom-npm.cdx.json
