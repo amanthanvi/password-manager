@@ -1955,9 +1955,13 @@
 
         <div class="workspace-right">
   {#if status}
-    <section class="import-export">
-      <h2>Import / Export</h2>
-      <div class="import-export-grid">
+    <details class="import-export fold">
+      <summary>
+        <span>Import / Export</span>
+        <span class="summary-meta">CSV, Bitwarden JSON, encrypted export</span>
+      </summary>
+      <div class="fold-body">
+        <div class="import-export-grid">
         <div class="import-panel">
           <h3>Import</h3>
           <p class="muted">Imports are previewed first. Suspected duplicates require a decision per item.</p>
@@ -2081,7 +2085,8 @@
           </div>
         </div>
       </div>
-    </section>
+      </div>
+    </details>
   {/if}
 
   {#if status}
@@ -2153,8 +2158,12 @@
   {/if}
 
   {#if status}
-    <section class="add-note">
-      <h2>Add Note</h2>
+    <details class="add-note fold">
+      <summary>
+        <span>Add Note</span>
+        <span class="summary-meta">Encrypted body</span>
+      </summary>
+      <div class="fold-body">
       <label>
         Title
         <input bind:value={newNoteTitle} />
@@ -2174,13 +2183,18 @@
       <div class="actions">
         <button on:click={addNote} disabled={newNoteTitle.trim().length === 0}>Save Note</button>
       </div>
-    </section>
+      </div>
+    </details>
   {/if}
 
   {#if status}
-    <section class="add-passkey">
-      <h2>Add Passkey Reference</h2>
-      <p class="muted">This is a reference entry only. npw does not store passkeys.</p>
+    <details class="add-passkey fold">
+      <summary>
+        <span>Add Passkey Reference</span>
+        <span class="summary-meta">No passkeys stored</span>
+      </summary>
+      <div class="fold-body">
+        <p class="muted">This is a reference entry only. npw does not store passkeys.</p>
       <label>
         Title
         <input bind:value={newPasskeyTitle} disabled={newPasskeyBusy} />
@@ -2229,7 +2243,8 @@
           {newPasskeyBusy ? 'Saving…' : 'Save Passkey Reference'}
         </button>
       </div>
-    </section>
+      </div>
+    </details>
   {/if}
 
   <div class="actions">
@@ -2773,13 +2788,65 @@
     backdrop-filter: blur(10px);
   }
 
+  .fold {
+    display: block;
+    padding: 0;
+  }
+
+  .fold > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.9rem;
+    font-weight: 750;
+    color: var(--ink);
+    user-select: none;
+  }
+
+  .fold > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .fold > summary::marker {
+    content: '';
+  }
+
+  .fold > summary .summary-meta {
+    margin-left: auto;
+    font-weight: 650;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+    text-align: right;
+  }
+
+  .fold > summary::after {
+    content: '>';
+    color: var(--ink-3);
+    transform: rotate(-90deg);
+    transition: transform 140ms ease, color 140ms ease;
+  }
+
+  .fold[open] > summary::after {
+    transform: rotate(0deg);
+    color: var(--ink-2);
+  }
+
+  .fold[open] > summary {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .fold-body {
+    padding: 0.9rem;
+    display: grid;
+    gap: 0.85rem;
+  }
+
   .picker h2,
   .settings h2,
   .quick-unlock h2,
-  .import-export h2,
   .add-login h2,
-  .add-note h2,
-  .add-passkey h2,
   .items h2,
   .detail h2 {
     margin: 0;
