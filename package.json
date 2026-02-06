@@ -1,0 +1,13 @@
+{
+  "name": "npw",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "lint": "pnpm --filter desktop lint && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "typecheck": "pnpm --filter desktop typecheck && cargo check --workspace --all-targets",
+    "test": "pnpm --filter desktop test && cargo test --workspace --all-targets",
+    "build": "pnpm --filter desktop build && cargo build --workspace --all-targets",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
+  }
+}

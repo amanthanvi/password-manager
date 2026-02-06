@@ -6,6 +6,7 @@
 node_modules/
 dist/
 out/
+dist-electron/
 .svelte-kit/
 *.tsbuildinfo
 .env

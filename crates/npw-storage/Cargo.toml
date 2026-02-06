@@ -1,0 +1,10 @@
+[package]
+name = "npw-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+npw-core = { path = "../npw-core" }
+npw-domain = { path = "../npw-domain" }
