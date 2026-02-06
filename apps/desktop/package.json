@@ -6,7 +6,8 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && tsc -p tsconfig.electron.json",
+    "build:addon": "node ../../scripts/build-addon.mjs",
+    "build": "pnpm run build:addon && vite build && tsc -p tsconfig.electron.json",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json && tsc -p tsconfig.electron.json --noEmit",

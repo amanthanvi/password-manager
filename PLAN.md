@@ -100,4 +100,5 @@ These become authoritative once scaffolded in Step 1:
 - [x] Plan approved by user (`pnpm` selected; dependency additions pre-approved).
 - [x] M1 complete: monorepo scaffolded (Rust workspace, Electron+Svelte app, root scripts, CI skeleton, Golden Commands operational).
 - [x] M2 complete: NPW1 core parser/writer and crypto pipeline implemented (Argon2id, HKDF-SHA256, XChaCha20-Poly1305, AAD binding) with roundtrip/tamper/KDF-bound tests.
-- [ ] M3 in progress: implemented CLI `vault init/check/unlock/status`, `config get/set/list`, and `generate` (charset+diceware baseline), backed by config + storage plumbing.
+- [x] M3 complete: CLI `vault init/check/unlock/status`, `config get/set/list`, and `generate` (charset+diceware baseline) implemented with config + storage plumbing.
+- [ ] M4 in progress: N-API addon now exposes vault APIs, Electron IPC allowlist wired, preload bridge added, and renderer flow calls native methods.
