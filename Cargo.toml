@@ -20,6 +20,7 @@ argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
 ciborium = "0.2.2"
 clap = { version = "4.5.53", features = ["derive"] }
+csv = "1.4.0"
 data-encoding = "2.9.0"
 directories = "6.0.0"
 fs2 = "0.4.3"

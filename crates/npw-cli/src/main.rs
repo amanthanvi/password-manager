@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use data_encoding::BASE32_NOPAD;
 use directories::ProjectDirs;
 use npw_core::{
     CreateVaultInput, ItemTypeFilter, KdfParams, LoginItem, ModelError, NoteItem, PasskeyRefItem,
@@ -90,6 +91,14 @@ enum Command {
         #[command(subcommand)]
         command: ItemCommand,
     },
+    Import {
+        #[command(subcommand)]
+        command: ImportCommand,
+    },
+    Export {
+        #[command(subcommand)]
+        command: ExportCommand,
+    },
     Totp(TotpArgs),
     Recover(RecoverArgs),
     Search(SearchArgs),
@@ -127,9 +136,29 @@ enum ConfigCommand {
     List,
 }
 
+#[derive(Debug, Subcommand)]
+enum ImportCommand {
+    Csv(ImportCsvArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum ExportCommand {
+    Csv(ExportArgs),
+    Json(ExportArgs),
+    Encrypted(ExportEncryptedArgs),
+}
+
 #[derive(Debug, Args)]
 struct VaultPathArgs {
     path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum DuplicatePolicyArg {
+    Skip,
+    Overwrite,
+    KeepBoth,
 }
 
 #[derive(Debug, Args)]
@@ -143,6 +172,35 @@ struct RecoverArgs {
     path: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
     auto: bool,
+}
+
+#[derive(Debug, Args)]
+struct ImportCsvArgs {
+    input: PathBuf,
+    #[arg(long)]
+    path: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = DuplicatePolicyArg::Skip)]
+    duplicate: DuplicatePolicyArg,
+}
+
+#[derive(Debug, Args)]
+struct ExportArgs {
+    output: PathBuf,
+    #[arg(long)]
+    path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    include_secrets: bool,
+    #[arg(long, default_value_t = false)]
+    yes: bool,
+}
+
+#[derive(Debug, Args)]
+struct ExportEncryptedArgs {
+    output: PathBuf,
+    #[arg(long)]
+    path: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    redacted: bool,
 }
 
 #[derive(Debug, Args)]
@@ -482,6 +540,8 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
             VaultCommand::ChangePassword(args) => handle_vault_change_password(cli, &config, args),
         },
         Command::Item { command } => handle_item_command(cli, &config, command),
+        Command::Import { command } => handle_import_command(cli, &config, command),
+        Command::Export { command } => handle_export_command(cli, &config, command),
         Command::Totp(args) => handle_totp(cli, &config, args),
         Command::Recover(args) => handle_recover(cli, &config, args),
         Command::Search(args) => handle_search(cli, &config, args),
@@ -705,6 +765,619 @@ fn handle_item_command(
         ItemCommand::List(args) => handle_item_list(cli, config, args),
         ItemCommand::Delete(args) => handle_item_delete(cli, config, args),
     }
+}
+
+fn handle_import_command(
+    cli: &Cli,
+    config: &AppConfig,
+    command: &ImportCommand,
+) -> Result<CommandOutput, CliError> {
+    match command {
+        ImportCommand::Csv(args) => handle_import_csv(cli, config, args),
+    }
+}
+
+fn handle_export_command(
+    cli: &Cli,
+    config: &AppConfig,
+    command: &ExportCommand,
+) -> Result<CommandOutput, CliError> {
+    match command {
+        ExportCommand::Csv(args) => handle_export_csv(cli, config, args),
+        ExportCommand::Json(args) => handle_export_json(cli, config, args),
+        ExportCommand::Encrypted(args) => handle_export_encrypted(cli, config, args),
+    }
+}
+
+fn handle_import_csv(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ImportCsvArgs,
+) -> Result<CommandOutput, CliError> {
+    let now = unix_seconds_now();
+    let (path, password, unlocked, mut payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_path(&args.input)
+        .map_err(map_csv_error)?;
+    let headers = reader.headers().map_err(map_csv_error)?.clone();
+    let supported_headers = HashSet::from([
+        "type", "title", "username", "password", "url", "notes", "tags", "totp_uri",
+    ]);
+    let mut warnings = Vec::new();
+    for header in &headers {
+        if !supported_headers.contains(header) {
+            warnings.push(format!("ignored unknown column `{header}`"));
+        }
+    }
+
+    let mut login_index = build_login_duplicate_index(&payload);
+    let mut imported = 0_u32;
+    let mut skipped = 0_u32;
+    let mut overwritten = 0_u32;
+
+    for (row_index, result) in reader.records().enumerate() {
+        let row = result.map_err(map_csv_error)?;
+        let item_type = csv_cell(&headers, &row, "type")
+            .unwrap_or("login")
+            .trim()
+            .to_ascii_lowercase();
+        let title = csv_cell(&headers, &row, "title")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if title.is_empty() {
+            skipped += 1;
+            warnings.push(format!(
+                "row {} skipped: missing required `title`",
+                row_index + 2
+            ));
+            continue;
+        }
+
+        match item_type.as_str() {
+            "login" => {
+                let username = normalize_optional_cell(csv_cell(&headers, &row, "username"));
+                let password_field = normalize_optional_cell(csv_cell(&headers, &row, "password"));
+                let primary_url = normalize_optional_cell(csv_cell(&headers, &row, "url"));
+                let notes = normalize_optional_cell(csv_cell(&headers, &row, "notes"));
+                let tags = parse_csv_tags(csv_cell(&headers, &row, "tags").unwrap_or_default());
+                let totp_uri = normalize_optional_cell(csv_cell(&headers, &row, "totp_uri"));
+                let totp = if let Some(uri) = totp_uri {
+                    match parse_otpauth_uri(&uri) {
+                        Ok(config) => Some(config),
+                        Err(error) => {
+                            skipped += 1;
+                            warnings.push(format!(
+                                "row {} skipped: invalid `totp_uri` ({})",
+                                row_index + 2,
+                                error
+                            ));
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let urls = primary_url
+                    .clone()
+                    .map(|value| {
+                        vec![UrlEntry {
+                            url: value,
+                            match_type: UrlMatchType::Exact,
+                        }]
+                    })
+                    .unwrap_or_default();
+                let key = login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
+
+                if let Some(existing_id) = login_index.get(&key).cloned() {
+                    match args.duplicate {
+                        DuplicatePolicyArg::Skip => {
+                            skipped += 1;
+                            continue;
+                        }
+                        DuplicatePolicyArg::Overwrite => {
+                            if let Some(VaultItem::Login(existing)) = payload
+                                .items
+                                .iter_mut()
+                                .find(|item| item.id() == existing_id)
+                            {
+                                existing.title = title.clone();
+                                existing.urls = urls;
+                                existing.username = username;
+                                existing.password = password_field;
+                                existing.totp = totp;
+                                existing.notes = notes;
+                                existing.tags = tags;
+                                existing.favorite = false;
+                                existing.updated_at = now;
+                                overwritten += 1;
+                                continue;
+                            }
+                        }
+                        DuplicatePolicyArg::KeepBoth => {}
+                    }
+                }
+
+                let item = VaultItem::Login(LoginItem {
+                    id: Uuid::new_v4().to_string(),
+                    title,
+                    urls,
+                    username,
+                    password: password_field,
+                    totp,
+                    notes,
+                    tags,
+                    favorite: false,
+                    created_at: now,
+                    updated_at: now,
+                });
+                let item_id = item.id().to_owned();
+                payload.add_item(item, now).map_err(map_model_error)?;
+                login_index.insert(key, item_id);
+                imported += 1;
+            }
+            "note" => {
+                let body = csv_cell(&headers, &row, "notes")
+                    .unwrap_or_default()
+                    .to_owned();
+                let tags = parse_csv_tags(csv_cell(&headers, &row, "tags").unwrap_or_default());
+                let item = VaultItem::Note(NoteItem {
+                    id: Uuid::new_v4().to_string(),
+                    title,
+                    body,
+                    tags,
+                    favorite: false,
+                    created_at: now,
+                    updated_at: now,
+                });
+                payload.add_item(item, now).map_err(map_model_error)?;
+                imported += 1;
+            }
+            other => {
+                skipped += 1;
+                warnings.push(format!(
+                    "row {} skipped: unsupported `type` value `{other}`",
+                    row_index + 2
+                ));
+            }
+        }
+    }
+
+    persist_vault_payload(
+        &path,
+        &password,
+        &unlocked,
+        payload,
+        config.backup.max_retained,
+    )?;
+
+    Ok(CommandOutput {
+        message: format!(
+            "Imported {} rows from {} (skipped {}, overwritten {})",
+            imported,
+            args.input.display(),
+            skipped,
+            overwritten
+        ),
+        payload: json!({
+            "path": path,
+            "input": args.input,
+            "imported": imported,
+            "skipped": skipped,
+            "overwritten": overwritten,
+            "warnings": warnings
+        }),
+    })
+}
+
+fn handle_export_csv(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ExportArgs,
+) -> Result<CommandOutput, CliError> {
+    confirm_plaintext_export(cli, args.include_secrets, args.yes)?;
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    ensure_output_parent(&args.output)?;
+
+    let mut writer = csv::Writer::from_path(&args.output).map_err(map_csv_error)?;
+    writer
+        .write_record([
+            "type",
+            "title",
+            "username",
+            "password",
+            "url",
+            "notes",
+            "tags",
+            "totp_uri",
+            "created_at",
+            "updated_at",
+        ])
+        .map_err(map_csv_error)?;
+
+    for item in &payload.items {
+        writer
+            .write_record(export_item_csv_row(item, args.include_secrets))
+            .map_err(map_csv_error)?;
+    }
+    writer.flush().map_err(map_io_error)?;
+
+    Ok(CommandOutput {
+        message: format!(
+            "Exported {} items to {}",
+            payload.items.len(),
+            args.output.display()
+        ),
+        payload: json!({
+            "output": args.output,
+            "item_count": payload.items.len(),
+            "redacted": !args.include_secrets,
+            "format": "csv"
+        }),
+    })
+}
+
+fn handle_export_json(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ExportArgs,
+) -> Result<CommandOutput, CliError> {
+    confirm_plaintext_export(cli, args.include_secrets, args.yes)?;
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    ensure_output_parent(&args.output)?;
+
+    let export = json!({
+        "exported_at": unix_seconds_now(),
+        "redacted": !args.include_secrets,
+        "item_count": payload.items.len(),
+        "items": payload.items.iter().map(|item| export_item_json(item, args.include_secrets)).collect::<Vec<_>>()
+    });
+    let encoded = serde_json::to_vec_pretty(&export).map_err(|error| CliError {
+        code: CliExitCode::General,
+        kind: "export_json_encode_failed",
+        message: error.to_string(),
+    })?;
+    std::fs::write(&args.output, encoded).map_err(map_io_error)?;
+
+    Ok(CommandOutput {
+        message: format!(
+            "Exported {} items to {}",
+            payload.items.len(),
+            args.output.display()
+        ),
+        payload: json!({
+            "output": args.output,
+            "item_count": payload.items.len(),
+            "redacted": !args.include_secrets,
+            "format": "json"
+        }),
+    })
+}
+
+fn handle_export_encrypted(
+    cli: &Cli,
+    config: &AppConfig,
+    args: &ExportEncryptedArgs,
+) -> Result<CommandOutput, CliError> {
+    if cli.non_interactive {
+        return Err(CliError::usage(
+            "encrypted export does not support --non-interactive",
+        ));
+    }
+    let (path, master_password, unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    if path == args.output {
+        return Err(CliError::usage(
+            "encrypted export output must differ from vault path",
+        ));
+    }
+    ensure_output_parent(&args.output)?;
+
+    let mut export_payload = if args.redacted {
+        redact_payload(payload)
+    } else {
+        payload
+    };
+    export_payload.app.name = "npw-export".to_owned();
+    export_payload.settings.insert(
+        "export_meta.exported_at".to_owned(),
+        unix_seconds_now().to_string(),
+    );
+    export_payload
+        .settings
+        .insert("export_meta.redacted".to_owned(), args.redacted.to_string());
+    let payload_bytes = export_payload.to_cbor().map_err(map_model_error)?;
+
+    let export_password = read_master_password(false, true)?;
+    if export_password == master_password {
+        return Err(CliError::usage(
+            "export password must differ from the vault master password",
+        ));
+    }
+
+    let encrypted_export = create_vault_file(&CreateVaultInput {
+        master_password: &export_password,
+        payload_plaintext: &payload_bytes,
+        item_count: export_payload.item_count(),
+        vault_label: Some("npw-export"),
+        kdf_params: unlocked.header.kdf_params,
+    })
+    .map_err(map_vault_error)?;
+    write_vault(&args.output, &encrypted_export, config.backup.max_retained)
+        .map_err(map_storage_error)?;
+
+    Ok(CommandOutput {
+        message: format!(
+            "Wrote encrypted export with {} items to {}",
+            export_payload.item_count(),
+            args.output.display()
+        ),
+        payload: json!({
+            "output": args.output,
+            "item_count": export_payload.item_count(),
+            "redacted": args.redacted,
+            "format": "npwx"
+        }),
+    })
+}
+
+fn confirm_plaintext_export(
+    cli: &Cli,
+    include_secrets: bool,
+    acknowledged: bool,
+) -> Result<(), CliError> {
+    if !include_secrets {
+        return Ok(());
+    }
+    if acknowledged {
+        return Ok(());
+    }
+    if cli.non_interactive {
+        return Err(CliError::usage(
+            "--include-secrets requires --yes in --non-interactive mode",
+        ));
+    }
+
+    print!("Warning: plaintext export includes passwords and note bodies. Continue? [y/N]: ");
+    io::stdout().flush().map_err(map_io_error)?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).map_err(map_io_error)?;
+    let confirmed = matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+    if confirmed {
+        Ok(())
+    } else {
+        Err(CliError::usage("plaintext export cancelled"))
+    }
+}
+
+fn ensure_output_parent(path: &Path) -> Result<(), CliError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(map_io_error)?;
+    }
+    Ok(())
+}
+
+fn csv_cell<'a>(
+    headers: &csv::StringRecord,
+    row: &'a csv::StringRecord,
+    name: &str,
+) -> Option<&'a str> {
+    headers
+        .iter()
+        .position(|header| header == name)
+        .and_then(|index| row.get(index))
+}
+
+fn normalize_optional_cell(value: Option<&str>) -> Option<String> {
+    let trimmed = value.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn parse_csv_tags(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn build_login_duplicate_index(payload: &VaultPayload) -> HashMap<String, String> {
+    let mut index = HashMap::new();
+    for item in &payload.items {
+        if let VaultItem::Login(login) = item {
+            let key = login_duplicate_key(
+                &login.title,
+                login.username.as_deref(),
+                login.urls.first().map(|entry| entry.url.as_str()),
+            );
+            index.insert(key, login.id.clone());
+        }
+    }
+    index
+}
+
+fn login_duplicate_key(title: &str, username: Option<&str>, primary_url: Option<&str>) -> String {
+    format!(
+        "{}|{}|{}",
+        title.trim().to_ascii_lowercase(),
+        username.unwrap_or_default().trim().to_ascii_lowercase(),
+        primary_url.unwrap_or_default().trim().to_ascii_lowercase()
+    )
+}
+
+fn export_item_csv_row(item: &VaultItem, include_secrets: bool) -> [String; 10] {
+    match item {
+        VaultItem::Login(login) => [
+            "login".to_owned(),
+            login.title.clone(),
+            login.username.clone().unwrap_or_default(),
+            if include_secrets {
+                login.password.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            login
+                .urls
+                .first()
+                .map(|entry| entry.url.clone())
+                .unwrap_or_default(),
+            if include_secrets {
+                login.notes.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            login.tags.join(";"),
+            if include_secrets {
+                login
+                    .totp
+                    .as_ref()
+                    .map(|totp| {
+                        login_totp_uri(login.title.as_str(), login.username.as_deref(), totp)
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            },
+            login.created_at.to_string(),
+            login.updated_at.to_string(),
+        ],
+        VaultItem::Note(note) => [
+            "note".to_owned(),
+            note.title.clone(),
+            String::new(),
+            String::new(),
+            String::new(),
+            if include_secrets {
+                note.body.clone()
+            } else {
+                String::new()
+            },
+            note.tags.join(";"),
+            String::new(),
+            note.created_at.to_string(),
+            note.updated_at.to_string(),
+        ],
+        VaultItem::PasskeyRef(passkey) => [
+            "passkey_ref".to_owned(),
+            passkey.title.clone(),
+            passkey.user_display_name.clone().unwrap_or_default(),
+            String::new(),
+            passkey.rp_id.clone(),
+            if include_secrets {
+                passkey.notes.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            passkey.tags.join(";"),
+            String::new(),
+            passkey.created_at.to_string(),
+            passkey.updated_at.to_string(),
+        ],
+    }
+}
+
+fn export_item_json(item: &VaultItem, include_secrets: bool) -> Value {
+    match item {
+        VaultItem::Login(login) => {
+            let mut value = json!({
+                "type": "login",
+                "id": login.id,
+                "title": login.title,
+                "username": login.username,
+                "urls": login.urls,
+                "tags": login.tags,
+                "favorite": login.favorite,
+                "created_at": login.created_at,
+                "updated_at": login.updated_at
+            });
+            if include_secrets {
+                value["password"] = json!(login.password);
+                value["notes"] = json!(login.notes);
+                value["totp_uri"] = json!(login.totp.as_ref().map(|totp| login_totp_uri(
+                    login.title.as_str(),
+                    login.username.as_deref(),
+                    totp
+                )));
+            }
+            value
+        }
+        VaultItem::Note(note) => {
+            let mut value = json!({
+                "type": "note",
+                "id": note.id,
+                "title": note.title,
+                "tags": note.tags,
+                "favorite": note.favorite,
+                "created_at": note.created_at,
+                "updated_at": note.updated_at
+            });
+            if include_secrets {
+                value["body"] = json!(note.body);
+            }
+            value
+        }
+        VaultItem::PasskeyRef(passkey) => {
+            let mut value = json!({
+                "type": "passkey_ref",
+                "id": passkey.id,
+                "title": passkey.title,
+                "rp_id": passkey.rp_id,
+                "rp_name": passkey.rp_name,
+                "user_display_name": passkey.user_display_name,
+                "tags": passkey.tags,
+                "favorite": passkey.favorite,
+                "created_at": passkey.created_at,
+                "updated_at": passkey.updated_at
+            });
+            if include_secrets {
+                value["notes"] = json!(passkey.notes);
+                value["credential_id"] = json!(passkey.credential_id);
+            }
+            value
+        }
+    }
+}
+
+fn login_totp_uri(title: &str, username: Option<&str>, config: &TotpConfig) -> String {
+    let secret = BASE32_NOPAD.encode(&config.seed);
+    let issuer = config.issuer.clone().unwrap_or_else(|| "npw".to_owned());
+    let label = username
+        .map(|name| format!("{issuer}:{name}"))
+        .unwrap_or_else(|| format!("{issuer}:{title}"));
+    format!(
+        "otpauth://totp/{label}?secret={secret}&issuer={issuer}&algorithm={}&digits={}&period={}",
+        totp_algorithm_name(config.algorithm),
+        config.digits,
+        config.period
+    )
+}
+
+fn redact_payload(mut payload: VaultPayload) -> VaultPayload {
+    for item in &mut payload.items {
+        match item {
+            VaultItem::Login(login) => {
+                login.password = None;
+                login.notes = None;
+                login.totp = None;
+            }
+            VaultItem::Note(note) => {
+                note.body.clear();
+            }
+            VaultItem::PasskeyRef(passkey) => {
+                passkey.notes = None;
+            }
+        }
+    }
+    payload.rebuild_search_index();
+    payload
 }
 
 fn handle_item_add_login(
@@ -1353,6 +2026,14 @@ fn map_totp_error(error: TotpError) -> CliError {
             kind: "invalid_totp_config",
             message: error.to_string(),
         },
+    }
+}
+
+fn map_csv_error(error: csv::Error) -> CliError {
+    CliError {
+        code: CliExitCode::CorruptOrParse,
+        kind: "csv_error",
+        message: error.to_string(),
     }
 }
 
