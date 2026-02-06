@@ -165,6 +165,7 @@ type VaultSession = {
   getNote: (id: string) => NoteDetail
   getPasskeyRef: (id: string) => PasskeyRefDetail
   addNote: (title: string, body: string) => string
+  updateNote: (id: string, title: string, body: string) => boolean
   addLogin: (input: AddLoginInput) => string
   deleteItem: (id: string) => boolean
 }
@@ -425,6 +426,21 @@ function registerIpcHandlers(api: AddonApi) {
       throw new Error('body is too long')
     }
     return session.addNote(safeTitle, payload.body)
+  })
+
+  ipcMain.handle('item.note.update', (_event, payload: { id: string; title: string; body: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const safeTitle = validateText(payload.title, 'title', 256)
+    if (typeof payload.body !== 'string') {
+      throw new Error('body must be a string')
+    }
+    if (payload.body.length > 1_000_000) {
+      throw new Error('body is too long')
+    }
+    return session.updateNote(safeId, safeTitle, payload.body)
   })
 
   ipcMain.handle('item.login.add', (_event, payload: AddLoginInput) => {

@@ -546,6 +546,32 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn update_note(&mut self, id: String, title: String, body: String) -> Result<bool> {
+        let now = unix_seconds_now();
+        let index = self
+            .payload
+            .items
+            .iter()
+            .position(|item| item.id() == id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+
+        let VaultItem::Note(note) = &mut self.payload.items[index] else {
+            return Err(error_to_napi("item is not a note".to_owned()));
+        };
+
+        note.title = title;
+        note.body = body;
+        note.updated_at = now;
+        note.validate()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.payload.updated_at = now;
+        self.payload.rebuild_search_index();
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(true)
+    }
+
+    #[napi]
     pub fn add_login(&mut self, input: AddLoginInput) -> Result<String> {
         let now = unix_seconds_now();
         let id = Uuid::new_v4().to_string();

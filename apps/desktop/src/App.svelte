@@ -31,6 +31,10 @@
   let recents = []
   let newNoteTitle = ''
   let newNoteBody = ''
+  let noteEditTitle = ''
+  let noteEditBody = ''
+  let noteEditBusy = false
+  let noteEditError = ''
   let newLoginTitle = ''
   let newLoginUrl = ''
   let newLoginUsername = ''
@@ -104,6 +108,10 @@
       selectedItem = null
       loginDetail = null
       noteDetail = null
+      noteEditTitle = ''
+      noteEditBody = ''
+      noteEditBusy = false
+      noteEditError = ''
       passkeyDetail = null
       totp = null
       totpQrUrl = null
@@ -293,10 +301,15 @@
       selectedItem = null
       loginDetail = null
       noteDetail = null
+      noteEditTitle = ''
+      noteEditBody = ''
+      noteEditBusy = false
+      noteEditError = ''
       passkeyDetail = null
       totp = null
       totpQrUrl = null
       totpQrVisible = false
+      closeTotpImport()
       clearTotpInterval()
       closeRecoveryWizard()
       clearRevealedPassword()
@@ -482,6 +495,32 @@
     }
   }
 
+  const updateNote = async () => {
+    if (!noteDetail) {
+      return
+    }
+
+    const id = noteDetail.id
+    noteEditBusy = true
+    noteEditError = ''
+    try {
+      await window.npw.noteUpdate({ id, title: noteEditTitle, body: noteEditBody })
+      await refreshItems()
+      const refreshed = items.find((item) => item.id === id)
+      if (refreshed) {
+        await selectItem(refreshed)
+      }
+      lastResult = `Updated note ${id}`
+      pushToast({ kind: 'success', title: 'Updated note', timeoutMs: 3500 })
+    } catch (error) {
+      noteEditError = formatError(error)
+      lastResult = noteEditError
+      pushToast({ kind: 'error', title: 'Update note failed', detail: noteEditError })
+    } finally {
+      noteEditBusy = false
+    }
+  }
+
   const addLogin = async () => {
     try {
       const id = await window.npw.loginAdd({
@@ -579,6 +618,10 @@
 
       if (item.itemType === 'note') {
         noteDetail = await window.npw.noteGet({ id: itemId })
+        noteEditTitle = noteDetail.title
+        noteEditBody = noteDetail.body
+        noteEditError = ''
+        noteEditBusy = false
         lastResult = `Loaded item ${itemId}`
         return
       }
@@ -1266,18 +1309,25 @@
       <h2>Note</h2>
       <p class="muted">{noteDetail.id}</p>
       <div class="actions">
+        <button type="button" on:click={updateNote} disabled={noteEditBusy || noteEditTitle.trim().length === 0}>
+          {noteEditBusy ? 'Saving…' : 'Save'}
+        </button>
         <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
       </div>
 
-      <div class="field">
-        <div class="label">Title</div>
-        <div>{noteDetail.title}</div>
-      </div>
+      <label>
+        Title
+        <input bind:value={noteEditTitle} disabled={noteEditBusy} />
+      </label>
 
-      <div class="field">
-        <div class="label">Body</div>
-        <pre class="note">{noteDetail.body}</pre>
-      </div>
+      <label>
+        Body
+        <textarea bind:value={noteEditBody} rows="10" disabled={noteEditBusy}></textarea>
+      </label>
+
+      {#if noteEditError}
+        <p class="callout">{noteEditError}</p>
+      {/if}
     </section>
   {/if}
 
