@@ -1393,6 +1393,7 @@ CI tasks:
 - Build CLI
 - Build Electron app
 - Run unit/integration tests
+- Run GUI E2E smoke tests (Playwright; Linux)
 - Lint/format checks
 - Dependency audits (`cargo audit`, `npm audit`)
 - SBOM generation (release)

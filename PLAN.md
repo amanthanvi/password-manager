@@ -143,5 +143,5 @@ These become authoritative once scaffolded in Step 1:
 - [x] Core: implement mlock/zeroize policy for key material with graceful degradation (SPEC G8).
 - [x] Desktop security: add production CSP with `connect-src 'none'` (SPEC I2) and ensure networking is disabled by default.
 - [x] CLI: enforce config `set` validation bounds (SPEC J6) to match desktop/addon behavior.
-- [ ] QA/release gates: add fuzz targets + coverage measurement + Playwright smoke tests in CI (SPEC O2–O5).
+- [x] QA/release gates: add fuzz targets + coverage measurement + Playwright smoke tests in CI (SPEC O2–O5).
 - [ ] Release: add packaging/signing workflow scaffolds and checksum publication for GitHub releases (SPEC P1–P4).
