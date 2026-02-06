@@ -35,6 +35,14 @@
   let recoverySelectedBackupPath = ''
   let recoveryBusy = false
   let recoveryError = ''
+  let appConfig = null
+  let settingsClipboardTimeoutSeconds = 30
+  let settingsAutoLockMinutes = 5
+  let settingsLockOnSuspend = true
+  let settingsRevealRequiresConfirm = true
+  let settingsLogLevel = 'info'
+  let settingsSaving = false
+  let settingsError = ''
 
   onMount(async () => {
     try {
@@ -48,6 +56,12 @@
       await refreshRecents()
     } catch {
       // Best-effort: recents are not security-critical.
+    }
+
+    try {
+      await refreshConfig()
+    } catch {
+      // Best-effort: config UI falls back to defaults.
     }
 
     detachVaultLocked = window.npw.onVaultLocked(({ reason }) => {
@@ -68,6 +82,7 @@
       recoverySelectedBackupPath = ''
       recoveryBusy = false
       recoveryError = ''
+      settingsError = ''
       lastResult = `Vault locked (${reason})`
     })
 
@@ -233,6 +248,57 @@
 
   const refreshRecents = async () => {
     recents = await window.npw.vaultRecentsList()
+  }
+
+  const refreshConfig = async () => {
+    settingsError = ''
+    try {
+      appConfig = await window.npw.configLoad()
+      if (appConfig?.security) {
+        settingsClipboardTimeoutSeconds = appConfig.security.clipboardTimeoutSeconds
+        settingsAutoLockMinutes = appConfig.security.autoLockMinutes
+        settingsLockOnSuspend = appConfig.security.lockOnSuspend
+        settingsRevealRequiresConfirm = appConfig.security.revealRequiresConfirm
+      }
+      if (appConfig?.logging?.level) {
+        settingsLogLevel = appConfig.logging.level
+      }
+    } catch (error) {
+      settingsError = formatError(error)
+    }
+  }
+
+  const saveSettings = async () => {
+    settingsSaving = true
+    settingsError = ''
+    try {
+      appConfig = await window.npw.configSet({
+        key: 'security.clipboard_timeout_seconds',
+        value: String(Number(settingsClipboardTimeoutSeconds))
+      })
+      appConfig = await window.npw.configSet({
+        key: 'security.auto_lock_minutes',
+        value: String(Number(settingsAutoLockMinutes))
+      })
+      appConfig = await window.npw.configSet({
+        key: 'security.lock_on_suspend',
+        value: String(Boolean(settingsLockOnSuspend))
+      })
+      appConfig = await window.npw.configSet({
+        key: 'security.reveal_requires_confirm',
+        value: String(Boolean(settingsRevealRequiresConfirm))
+      })
+      appConfig = await window.npw.configSet({
+        key: 'logging.level',
+        value: String(settingsLogLevel)
+      })
+      lastResult = 'Saved settings'
+      await refreshConfig()
+    } catch (error) {
+      settingsError = formatError(error)
+    } finally {
+      settingsSaving = false
+    }
   }
 
   const openRecent = (vault) => {
@@ -542,6 +608,58 @@
     <div class="actions">
       <button type="button" on:click={pickCreateVault}>Create New Vault…</button>
       <button type="button" on:click={pickOpenVault}>Open Existing Vault…</button>
+    </div>
+  </section>
+
+  <section class="settings">
+    <h2>Settings</h2>
+    {#if appConfig?.configPath}
+      <p class="muted">Config path: <span class="mono">{appConfig.configPath}</span></p>
+    {/if}
+
+    <label>
+      Auto-lock minutes
+      <input type="number" min="1" max="60" step="1" bind:value={settingsAutoLockMinutes} />
+    </label>
+
+    <label>
+      Lock on suspend / lock screen
+      <input type="checkbox" bind:checked={settingsLockOnSuspend} />
+    </label>
+
+    <label>
+      Clipboard timeout (seconds)
+      <input type="number" min="0" max="90" step="1" bind:value={settingsClipboardTimeoutSeconds} />
+    </label>
+
+    {#if Number(settingsClipboardTimeoutSeconds) === 0}
+      <p class="callout">Warning: clipboard auto-clear is disabled.</p>
+    {/if}
+
+    <label>
+      Reveal requires confirmation
+      <input type="checkbox" bind:checked={settingsRevealRequiresConfirm} />
+    </label>
+
+    <label>
+      Log level
+      <select bind:value={settingsLogLevel}>
+        <option value="error">error</option>
+        <option value="warn">warn</option>
+        <option value="info">info</option>
+        <option value="debug">debug</option>
+      </select>
+    </label>
+
+    {#if settingsError}
+      <p class="callout">{settingsError}</p>
+    {/if}
+
+    <div class="actions">
+      <button type="button" on:click={saveSettings} disabled={settingsSaving}>
+        {settingsSaving ? 'Saving…' : 'Save Settings'}
+      </button>
+      <button class="secondary" type="button" on:click={refreshConfig} disabled={settingsSaving}>Reload</button>
     </div>
   </section>
 
@@ -857,7 +975,8 @@
   }
 
   input,
-  textarea {
+  textarea,
+  select {
     padding: 0.55rem 0.6rem;
     border: 1px solid #7a919f;
     border-radius: 0.35rem;

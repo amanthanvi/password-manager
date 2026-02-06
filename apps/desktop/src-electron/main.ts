@@ -209,13 +209,25 @@ function registerIpcHandlers(api: AddonApi) {
   let clipboardClear: { token: Buffer; digest: string; timeoutId: NodeJS.Timeout } | null = null
   const recentsPath = path.join(app.getPath('userData'), 'recent-vaults.json')
   let autoLockTimer: NodeJS.Timeout | null = null
+  let configCache: AppConfig | null = null
+
+  try {
+    configCache = api.configLoad()
+  } catch {
+    // Best-effort: desktop defaults still work without config access.
+  }
 
   ipcMain.handle('core.banner', () => api.coreBanner())
-  ipcMain.handle('config.load', () => api.configLoad())
+  ipcMain.handle('config.load', () => {
+    configCache = api.configLoad()
+    return configCache
+  })
   ipcMain.handle('config.set', (_event, payload: { key: string; value: string }) => {
     const safeKey = validateText(payload.key, 'key', 128)
     const safeValue = validateText(payload.value, 'value', 4096)
-    return api.configSet(safeKey, safeValue)
+    configCache = api.configSet(safeKey, safeValue)
+    resetAutoLockTimer()
+    return configCache
   })
   ipcMain.handle('app.activity', () => {
     resetAutoLockTimer()
@@ -223,8 +235,16 @@ function registerIpcHandlers(api: AddonApi) {
   })
 
   void app.whenReady().then(() => {
-    powerMonitor.on('suspend', () => lockSession('suspend'))
-    powerMonitor.on('lock-screen', () => lockSession('lock-screen'))
+    powerMonitor.on('suspend', () => {
+      if (configCache?.security.lockOnSuspend ?? true) {
+        lockSession('suspend')
+      }
+    })
+    powerMonitor.on('lock-screen', () => {
+      if (configCache?.security.lockOnSuspend ?? true) {
+        lockSession('lock-screen')
+      }
+    })
   })
 
   ipcMain.handle('vault.recents.list', async () => loadRecents())
@@ -419,7 +439,7 @@ function registerIpcHandlers(api: AddonApi) {
     if (!detail.username) {
       throw new Error('login item has no username')
     }
-    clipboardSetWithAutoClear(detail.username, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
+    clipboardSetWithAutoClear(detail.username)
     return true
   })
 
@@ -429,7 +449,7 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     const password = session.getLoginPassword(safeId)
-    clipboardSetWithAutoClear(password, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
+    clipboardSetWithAutoClear(password)
     return true
   })
 
@@ -455,13 +475,22 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     const code = session.getLoginTotp(safeId)
-    clipboardSetWithAutoClear(code.code, DEFAULT_CLIPBOARD_CLEAR_SECONDS)
+    clipboardSetWithAutoClear(code.code)
     return true
   })
 
-  function clipboardSetWithAutoClear(value: string, timeoutSeconds: number) {
+  function clipboardSetWithAutoClear(value: string) {
+    const timeoutSeconds = configCache?.security.clipboardTimeoutSeconds ?? DEFAULT_CLIPBOARD_CLEAR_SECONDS
     const token = crypto.randomBytes(32)
     clipboard.writeText(value)
+
+    if (timeoutSeconds === 0) {
+      if (clipboardClear) {
+        clearTimeout(clipboardClear.timeoutId)
+        clipboardClear = null
+      }
+      return
+    }
 
     const digest = sha256Base64(token, value)
     if (clipboardClear) {
@@ -487,12 +516,16 @@ function registerIpcHandlers(api: AddonApi) {
     if (!session) {
       return
     }
+    const autoLockMinutes = configCache?.security.autoLockMinutes ?? DEFAULT_AUTO_LOCK_MS / 60_000
+    if (autoLockMinutes <= 0) {
+      return
+    }
     if (autoLockTimer) {
       clearTimeout(autoLockTimer)
     }
     autoLockTimer = setTimeout(() => {
       lockSession('idle')
-    }, DEFAULT_AUTO_LOCK_MS)
+    }, autoLockMinutes * 60_000)
   }
 
   function lockSession(reason: string) {
