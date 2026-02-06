@@ -1,26 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# setup-btca.sh — One-time per-device btca bootstrap for the npw project.
+# setup-btca.sh — One-time per-device btca bootstrap.
 #
 # What this script does:
 #   1. Verifies bun is installed (prompts to install if missing)
 #   2. Installs btca globally via bun
 #   3. Prompts for LLM provider authentication
-#   4. Detects installed AI agents and reports MCP readiness
+#   4. Registers btca as a global MCP server for detected agents
+#   5. Optionally runs btca's skill installer
 #
-# Agent MCP configs are already committed to the repo:
-#   - Claude Code:  .mcp.json
-#   - Codex CLI:    .codex/config.toml
-#   - OpenCode:     opencode.json
-#
-# btca resources are defined in btca.config.jsonc (also committed).
+# Per-project resources are defined in btca.config.jsonc (committed to repo).
 # This script handles the per-device parts that can't be committed.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-echo "=== btca setup for npw ==="
+echo "=== btca setup ==="
 echo "Project: $PROJECT_DIR"
 echo ""
 
@@ -53,8 +49,8 @@ fi
 # ── 3. Provider authentication ──────────────────────────────────────
 echo ""
 echo "btca needs an LLM provider to process search queries."
-echo "Credentials are stored per-device in OpenCode's auth storage"
-echo "(~/.local/share/opencode/auth.json) — never committed to git."
+echo "Credentials are stored per-device (~/.local/share/opencode/auth.json)"
+echo "and are never committed to git."
 echo ""
 echo "Supported providers:"
 echo "  opencode        - API key (default)"
@@ -70,48 +66,66 @@ if [[ ! "$auth_confirm" =~ ^[Nn]$ ]]; then
     btca connect
 fi
 
-# ── 4. Detect agents and report MCP readiness ───────────────────────
+# ── 4. Register btca as global MCP server ────────────────────────────
 echo ""
-echo "=== Agent MCP status ==="
+echo "=== Registering btca-local MCP server globally ==="
 echo ""
 
-agents_found=0
-
+# Claude Code
 if command -v claude &>/dev/null; then
-    agents_found=$((agents_found + 1))
-    echo "[ok] Claude Code detected"
-    echo "     MCP config: .mcp.json (committed)"
-    echo "     On next session, approve 'btca-local' when prompted."
+    if claude mcp list 2>/dev/null | grep -q btca-local; then
+        echo "[ok] Claude Code: btca-local already registered"
+    else
+        claude mcp add --transport stdio btca-local --scope user -- bunx btca mcp 2>/dev/null \
+            && echo "[ok] Claude Code: btca-local registered (user scope)" \
+            || echo "[!!] Claude Code: failed to register btca-local"
+    fi
 fi
 
+# Codex CLI
 if command -v codex &>/dev/null; then
-    agents_found=$((agents_found + 1))
-    echo "[ok] Codex CLI detected ($(codex --version 2>/dev/null || echo '?'))"
-    echo "     MCP config: .codex/config.toml (committed)"
-    echo "     Trust this project when Codex prompts on first run."
+    if grep -q 'btca-local' ~/.codex/config.toml 2>/dev/null; then
+        echo "[ok] Codex CLI: btca-local already in ~/.codex/config.toml"
+    else
+        cat >> ~/.codex/config.toml <<'TOML'
+
+[mcp_servers.btca-local]
+command = "bunx"
+args = ["btca", "mcp"]
+startup_timeout_sec = 15.0
+TOML
+        echo "[ok] Codex CLI: btca-local added to ~/.codex/config.toml"
+    fi
 fi
 
+# OpenCode
 if command -v opencode &>/dev/null; then
-    agents_found=$((agents_found + 1))
-    echo "[ok] OpenCode detected ($(opencode --version 2>/dev/null || echo '?'))"
-    echo "     MCP config: opencode.json (committed)"
-    echo "     btca-local MCP server will load automatically."
+    OC_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+    if [ -f "$OC_CONFIG" ] && grep -q 'btca-local' "$OC_CONFIG" 2>/dev/null; then
+        echo "[ok] OpenCode: btca-local already in $OC_CONFIG"
+    else
+        echo "[!!] OpenCode: add btca-local manually to $OC_CONFIG"
+        echo "     Add to the \"mcp\" object:"
+        echo '     "btca-local": {'
+        echo '       "type": "local",'
+        echo '       "command": ["bunx", "btca", "mcp"],'
+        echo '       "enabled": true,'
+        echo '       "timeout": 15000'
+        echo '     }'
+    fi
 fi
 
-if [ "$agents_found" -eq 0 ]; then
-    echo "[--] No supported agents detected (Claude Code, Codex CLI, OpenCode)."
-    echo "     btca still works standalone: btca ask -r svelte -q '...'"
-    echo ""
-    echo "     To add MCP support for another agent, configure a stdio"
-    echo "     MCP server with command: bunx btca mcp"
+# Generic fallback
+if ! command -v claude &>/dev/null && ! command -v codex &>/dev/null && ! command -v opencode &>/dev/null; then
+    echo "[--] No supported agents detected."
+    echo "     btca works standalone: btca ask -r svelte -q '...'"
+    echo "     For any MCP-compatible agent, configure a stdio server:"
+    echo "       command: bunx btca mcp"
 fi
 
 # ── 5. Optional: btca skill installer ───────────────────────────────
 echo ""
-echo "btca offers an optional skill installer (interactive)."
-echo "This may add slash commands or integrations for supported agents."
-echo ""
-read -rp "Run 'btca skill' installer? [y/N] " skill_confirm
+read -rp "Run 'btca skill' installer (optional agent integrations)? [y/N] " skill_confirm
 if [[ "$skill_confirm" =~ ^[Yy]$ ]]; then
     btca skill
 fi
@@ -129,5 +143,6 @@ echo "  btca ask -r svelte -q '...'       # One-shot query"
 echo "  btca resources                    # List configured resources"
 echo "  btca serve                        # Start local API server (port 8080)"
 echo ""
-echo "In any supported agent session, btca MCP tools (listResources, ask)"
-echo "are available automatically via the committed config files."
+echo "btca MCP tools (listResources, ask) are available globally"
+echo "in all agent sessions. Per-project resources are loaded from"
+echo "btca.config.jsonc when you work inside a project directory."

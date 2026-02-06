@@ -17,14 +17,8 @@ Full specification: `SPEC.md`.
 
 ## btca (Context-Aware Codebase Search)
 
-btca is configured as an MCP server for this project. Agent-specific configs
-are committed to the repo — each agent reads its own file automatically:
-
-- Claude Code: `.mcp.json`
-- Codex CLI: `.codex/config.toml`
-- OpenCode: `opencode.json`
-
-Resources are defined in `btca.config.jsonc` (shared across all agents).
+btca is configured globally as an MCP server (`btca-local`). Project-specific
+resources are defined in `btca.config.jsonc`.
 
 ### Available resources
 

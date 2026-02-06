@@ -1,6 +1,0 @@
-# Codex CLI project configuration for npw.
-# btca resources are defined in btca.config.jsonc at project root.
-
-[mcp_servers.btca-local]
-command = "bunx"
-args = ["btca", "mcp"]
