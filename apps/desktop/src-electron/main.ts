@@ -152,6 +152,14 @@ type AddLoginInput = {
   notes?: string | null
 }
 
+type UpdateLoginInput = {
+  id: string
+  title: string
+  url?: string | null
+  username?: string | null
+  notes?: string | null
+}
+
 type VaultSession = {
   status: () => VaultStatus
   listItems: (query?: string | null) => ItemSummary[]
@@ -159,6 +167,7 @@ type VaultSession = {
   getLogin: (id: string) => LoginDetail
   getLoginPassword: (id: string) => string
   loginGenerateAndReplacePassword: (id: string) => string
+  updateLogin: (input: UpdateLoginInput) => boolean
   getLoginTotp: (id: string) => TotpCode
   getLoginTotpQrSvg: (id: string) => string
   setLoginTotp: (id: string, value: string) => boolean
@@ -472,6 +481,32 @@ function registerIpcHandlers(api: AddonApi) {
       url: safeUrl && safeUrl.length > 0 ? safeUrl : undefined,
       username: safeUsername && safeUsername.length > 0 ? safeUsername : undefined,
       password: typeof password === 'string' && password.length > 0 ? password : undefined,
+      notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
+    })
+  })
+
+  ipcMain.handle('item.login.update', (_event, payload: UpdateLoginInput) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    const safeTitle = validateText(payload.title, 'title', 256)
+    const safeUrl = payload.url ? validateOptionalText(payload.url, 'url', 2048) : undefined
+    const safeUsername = payload.username ? validateOptionalText(payload.username, 'username', 256) : undefined
+
+    const notes = payload.notes
+    if (notes != null && typeof notes !== 'string') {
+      throw new Error('notes must be a string')
+    }
+    if (typeof notes === 'string' && notes.length > 100_000) {
+      throw new Error('notes is too long')
+    }
+
+    return session.updateLogin({
+      id: safeId,
+      title: safeTitle,
+      url: safeUrl && safeUrl.length > 0 ? safeUrl : undefined,
+      username: safeUsername && safeUsername.length > 0 ? safeUsername : undefined,
       notes: typeof notes === 'string' && notes.length > 0 ? notes : undefined
     })
   })

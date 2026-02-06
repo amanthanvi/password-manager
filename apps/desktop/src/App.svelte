@@ -40,6 +40,12 @@
   let newLoginUsername = ''
   let newLoginPassword = ''
   let newLoginNotes = ''
+  let loginEditTitle = ''
+  let loginEditUrl = ''
+  let loginEditUsername = ''
+  let loginEditNotes = ''
+  let loginEditBusy = false
+  let loginEditError = ''
   let detachVaultLocked = null
   let activityListener = null
   let lastActivityPingAt = 0
@@ -107,6 +113,12 @@
       items = []
       selectedItem = null
       loginDetail = null
+      loginEditTitle = ''
+      loginEditUrl = ''
+      loginEditUsername = ''
+      loginEditNotes = ''
+      loginEditBusy = false
+      loginEditError = ''
       noteDetail = null
       noteEditTitle = ''
       noteEditBody = ''
@@ -300,6 +312,12 @@
       items = []
       selectedItem = null
       loginDetail = null
+      loginEditTitle = ''
+      loginEditUrl = ''
+      loginEditUsername = ''
+      loginEditNotes = ''
+      loginEditBusy = false
+      loginEditError = ''
       noteDetail = null
       noteEditTitle = ''
       noteEditBody = ''
@@ -549,6 +567,38 @@
     }
   }
 
+  const updateLogin = async () => {
+    if (!loginDetail) {
+      return
+    }
+
+    const id = loginDetail.id
+    loginEditBusy = true
+    loginEditError = ''
+    try {
+      await window.npw.loginUpdate({
+        id,
+        title: loginEditTitle,
+        url: loginEditUrl.trim().length > 0 ? loginEditUrl : null,
+        username: loginEditUsername.trim().length > 0 ? loginEditUsername : null,
+        notes: loginEditNotes.length > 0 ? loginEditNotes : null
+      })
+      await refreshItems()
+      const refreshed = items.find((item) => item.id === id)
+      if (refreshed) {
+        await selectItem(refreshed)
+      }
+      lastResult = `Updated login ${id}`
+      pushToast({ kind: 'success', title: 'Updated login', timeoutMs: 3500 })
+    } catch (error) {
+      loginEditError = formatError(error)
+      lastResult = loginEditError
+      pushToast({ kind: 'error', title: 'Update login failed', detail: loginEditError })
+    } finally {
+      loginEditBusy = false
+    }
+  }
+
   const deleteSelectedItem = async () => {
     if (!selectedItem) {
       return
@@ -593,6 +643,12 @@
     try {
       if (item.itemType === 'login') {
         loginDetail = await window.npw.loginGet({ id: itemId })
+        loginEditTitle = loginDetail.title
+        loginEditUrl = loginDetail.urls[0] ?? ''
+        loginEditUsername = loginDetail.username ?? ''
+        loginEditNotes = loginDetail.notes ?? ''
+        loginEditError = ''
+        loginEditBusy = false
         lastResult = `Loaded item ${itemId}`
         if (loginDetail.hasTotp) {
           await refreshTotp(itemId)
@@ -1218,21 +1274,24 @@
       <h2>Login</h2>
       <p class="muted">{loginDetail.id}</p>
       <div class="actions">
+        <button type="button" on:click={updateLogin} disabled={loginEditBusy || loginEditTitle.trim().length === 0}>
+          {loginEditBusy ? 'Saving…' : 'Save'}
+        </button>
         <button class="secondary" on:click={deleteSelectedItem}>Delete</button>
       </div>
 
-      <div class="field">
-        <div class="label">Title</div>
-        <div>{loginDetail.title}</div>
-      </div>
+      <label>
+        Title
+        <input bind:value={loginEditTitle} disabled={loginEditBusy} />
+      </label>
 
-      <div class="field">
-        <div class="label">Username</div>
+      <label>
+        Username
         <div class="inline">
-          <span>{loginDetail.username ?? '(none)'}</span>
+          <input bind:value={loginEditUsername} disabled={loginEditBusy} />
           <button on:click={copyUsername} disabled={!loginDetail.username}>Copy</button>
         </div>
-      </div>
+      </label>
 
       <div class="field">
         <div class="label">Password</div>
@@ -1282,24 +1341,18 @@
         {/if}
       </div>
 
-      <div class="field">
-        <div class="label">URLs</div>
-        {#if loginDetail.urls.length === 0}
-          <div class="muted">(none)</div>
-        {:else}
-          <ul class="urls">
-            {#each loginDetail.urls as url, index (index)}
-              <li>{url}</li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
+      <label>
+        URL
+        <input bind:value={loginEditUrl} disabled={loginEditBusy} />
+      </label>
 
-      {#if loginDetail.notes}
-        <div class="field">
-          <div class="label">Notes</div>
-          <pre class="note">{loginDetail.notes}</pre>
-        </div>
+      <label>
+        Notes
+        <textarea bind:value={loginEditNotes} rows="6" disabled={loginEditBusy}></textarea>
+      </label>
+
+      {#if loginEditError}
+        <p class="callout">{loginEditError}</p>
       {/if}
     </section>
   {/if}
@@ -1737,11 +1790,6 @@
     display: block;
     width: 256px;
     height: 256px;
-  }
-
-  .urls {
-    margin: 0;
-    padding-left: 1.25rem;
   }
 
   .note {

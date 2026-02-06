@@ -306,6 +306,15 @@ pub struct AddLoginInput {
     pub notes: Option<String>,
 }
 
+#[napi(object)]
+pub struct UpdateLoginInput {
+    pub id: String,
+    pub title: String,
+    pub url: Option<String>,
+    pub username: Option<String>,
+    pub notes: Option<String>,
+}
+
 #[napi]
 pub struct VaultSession {
     path: String,
@@ -627,6 +636,59 @@ impl VaultSession {
         self.persist()
             .map_err(|error| error_to_napi(error.to_string()))?;
         Ok(id)
+    }
+
+    #[napi]
+    pub fn update_login(&mut self, input: UpdateLoginInput) -> Result<bool> {
+        let now = unix_seconds_now();
+        let index = self
+            .payload
+            .items
+            .iter()
+            .position(|item| item.id() == input.id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+
+        let VaultItem::Login(login) = &mut self.payload.items[index] else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+
+        login.title = input.title;
+        login.urls = input
+            .url
+            .and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                }
+            })
+            .into_iter()
+            .map(|url| UrlEntry {
+                url,
+                match_type: UrlMatchType::Exact,
+            })
+            .collect();
+        login.username = input.username.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        });
+        login.notes = input
+            .notes
+            .and_then(|value| if value.is_empty() { None } else { Some(value) });
+        login.updated_at = now;
+        login
+            .validate()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.payload.updated_at = now;
+        self.payload.rebuild_search_index();
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(true)
     }
 
     #[napi]

@@ -165,6 +165,8 @@ contextBridge.exposeInMainWorld('npw', {
   noteUpdate: (payload: { id: string; title: string; body: string }): Promise<boolean> =>
     ipcRenderer.invoke('item.note.update', payload),
   loginAdd: (payload: AddLoginInput): Promise<string> => ipcRenderer.invoke('item.login.add', payload),
+  loginUpdate: (payload: { id: string; title: string; url?: string | null; username?: string | null; notes?: string | null }): Promise<boolean> =>
+    ipcRenderer.invoke('item.login.update', payload),
   itemDelete: (payload: { id: string }): Promise<boolean> => ipcRenderer.invoke('item.delete', payload),
   loginCopyUsername: (payload: { id: string }): Promise<boolean> =>
     ipcRenderer.invoke('item.login.copy-username', payload),
