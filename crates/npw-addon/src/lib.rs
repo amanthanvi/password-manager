@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use data_encoding::BASE32_NOPAD;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
@@ -8,6 +9,7 @@ use npw_core::{
     reencrypt_vault_file_with_kek, unlock_vault_file, unlock_vault_file_with_kek,
 };
 use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault, write_vault_with_lock};
+use qrcode::QrCode;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -305,6 +307,28 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn get_login_totp_qr_svg(&self, id: String) -> Result<String> {
+        let item = self
+            .payload
+            .get_item(&id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+        let VaultItem::Login(login) = item else {
+            return Err(error_to_napi("item is not a login".to_owned()));
+        };
+        let config = login
+            .totp
+            .as_ref()
+            .ok_or_else(|| error_to_napi("login item has no TOTP".to_owned()))?;
+
+        let uri = login_totp_uri(&login.title, login.username.as_deref(), config);
+        let code = QrCode::new(uri.as_bytes()).map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(256, 256)
+            .build())
+    }
+
+    #[napi]
     pub fn add_note(&mut self, title: String, body: String) -> Result<String> {
         let now = unix_seconds_now();
         let id = Uuid::new_v4().to_string();
@@ -433,6 +457,28 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(output, "{byte:02x}");
     }
     output
+}
+
+fn login_totp_uri(title: &str, username: Option<&str>, config: &npw_core::TotpConfig) -> String {
+    let secret = BASE32_NOPAD.encode(&config.seed);
+    let issuer = config.issuer.clone().unwrap_or_else(|| "npw".to_owned());
+    let label = username
+        .map(|name| format!("{issuer}:{name}"))
+        .unwrap_or_else(|| format!("{issuer}:{title}"));
+    format!(
+        "otpauth://totp/{label}?secret={secret}&issuer={issuer}&algorithm={}&digits={}&period={}",
+        totp_algorithm_name(config.algorithm),
+        config.digits,
+        config.period
+    )
+}
+
+fn totp_algorithm_name(algorithm: npw_core::TotpAlgorithm) -> &'static str {
+    match algorithm {
+        npw_core::TotpAlgorithm::SHA1 => "SHA1",
+        npw_core::TotpAlgorithm::SHA256 => "SHA256",
+        npw_core::TotpAlgorithm::SHA512 => "SHA512",
+    }
 }
 
 #[napi]

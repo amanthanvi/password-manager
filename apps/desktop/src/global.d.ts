@@ -102,6 +102,7 @@ declare global {
       loginCopyUsername: (payload: { id: string }) => Promise<boolean>
       loginCopyPassword: (payload: { id: string }) => Promise<boolean>
       loginTotpGet: (payload: { id: string }) => Promise<TotpCode>
+      loginTotpQrSvg: (payload: { id: string }) => Promise<string>
       loginCopyTotp: (payload: { id: string }) => Promise<boolean>
     }
   }

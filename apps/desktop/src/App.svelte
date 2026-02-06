@@ -16,6 +16,8 @@
   let passkeyDetail = null
   let totp = null
   let totpInterval = null
+  let totpQrUrl = null
+  let totpQrVisible = false
   let recents = []
   let newNoteTitle = ''
   let newNoteBody = ''
@@ -50,6 +52,8 @@
       noteDetail = null
       passkeyDetail = null
       totp = null
+      totpQrUrl = null
+      totpQrVisible = false
       clearTotpInterval()
       masterPassword = ''
       lastResult = `Vault locked (${reason})`
@@ -124,6 +128,8 @@
       noteDetail = null
       passkeyDetail = null
       totp = null
+      totpQrUrl = null
+      totpQrVisible = false
       clearTotpInterval()
       lastResult = 'Vault locked'
     } catch (error) {
@@ -188,6 +194,8 @@
         noteDetail = null
         passkeyDetail = null
         totp = null
+        totpQrUrl = null
+        totpQrVisible = false
         clearTotpInterval()
       }
       lastResult = `Loaded ${items.length} items`
@@ -267,6 +275,8 @@
     noteDetail = null
     passkeyDetail = null
     totp = null
+    totpQrUrl = null
+    totpQrVisible = false
     clearTotpInterval()
     if (!item) {
       return
@@ -354,6 +364,25 @@
 
   const refreshTotp = async (id) => {
     totp = await window.npw.loginTotpGet({ id })
+  }
+
+  const toggleTotpQr = async () => {
+    if (!selectedItem) {
+      return
+    }
+    if (totpQrVisible) {
+      totpQrVisible = false
+      return
+    }
+
+    try {
+      const svg = await window.npw.loginTotpQrSvg({ id: selectedItem.id })
+      totpQrUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+      totpQrVisible = true
+      lastResult = 'Rendered TOTP QR code'
+    } catch (error) {
+      lastResult = formatError(error)
+    }
   }
 
   const openPasskeySite = async () => {
@@ -572,7 +601,13 @@
               <span class="totp">{totp.code}</span>
               <span class="muted">{totp.remaining}s</span>
               <button on:click={copyTotp}>Copy</button>
+              <button on:click={toggleTotpQr}>{totpQrVisible ? 'Hide QR' : 'Export QR'}</button>
             </div>
+            {#if totpQrVisible && totpQrUrl}
+              <div class="qr">
+                <img class="qr-img" src={totpQrUrl} alt="TOTP QR" />
+              </div>
+            {/if}
           {:else}
             <div class="muted">(loading...)</div>
           {/if}
@@ -851,6 +886,21 @@
   .totp {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.08em;
+  }
+
+  .qr {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid #93a8b5;
+    border-radius: 0.5rem;
+    background: #ffffff;
+    width: fit-content;
+  }
+
+  .qr-img {
+    display: block;
+    width: 256px;
+    height: 256px;
   }
 
   .urls {
