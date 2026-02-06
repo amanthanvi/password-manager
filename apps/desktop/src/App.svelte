@@ -559,6 +559,23 @@
     clearRevealedPassword()
   }
 
+  const generateReplacePassword = async () => {
+    if (!selectedItem) {
+      return
+    }
+    const confirmed = confirm('Generate a new password and replace the current one?')
+    if (!confirmed) {
+      return
+    }
+    try {
+      clearRevealedPassword()
+      const mode = await window.npw.loginGenerateReplacePassword({ id: selectedItem.id })
+      lastResult = `Generated new ${mode} password and replaced`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
   const copyTotp = async () => {
     if (!selectedItem) {
       return
@@ -868,6 +885,7 @@
               <button class="secondary" type="button" on:click={revealPassword}>Reveal</button>
             {/if}
           {/if}
+          <button class="secondary" type="button" on:click={generateReplacePassword}>Generate &amp; Replace</button>
         </div>
       </div>
 
