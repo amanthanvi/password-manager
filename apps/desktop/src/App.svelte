@@ -45,6 +45,28 @@
   let settingsError = ''
   let revealedPassword = null
   let revealPasswordTimeoutId = null
+  let toastNextId = 0
+  let toasts = []
+
+  const dismissToast = (id) => {
+    toasts = toasts.filter((toast) => toast.id !== id)
+  }
+
+  const pushToast = ({
+    kind = 'info',
+    title,
+    detail = null,
+    retryLabel = null,
+    retry = null,
+    timeoutMs = null
+  }) => {
+    const id = (toastNextId += 1)
+    const toast = { id, kind, title, detail, retryLabel, retry }
+    toasts = [toast, ...toasts].slice(0, 6)
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      setTimeout(() => dismissToast(id), timeoutMs)
+    }
+  }
 
   onMount(async () => {
     try {
@@ -127,9 +149,12 @@
         label: vaultLabel
       })
       lastResult = `Created vault at ${vaultPath}`
+      pushToast({ kind: 'success', title: lastResult, timeoutMs: 4000 })
       await refreshRecents()
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Create vault failed', detail: message })
     }
   }
 
@@ -141,6 +166,7 @@
       })
       masterPassword = ''
       lastResult = `Vault unlocked: ${status.path}`
+      pushToast({ kind: 'success', title: 'Vault unlocked', timeoutMs: 3500 })
       await refreshRecents()
       await refreshItems()
     } catch (error) {
@@ -153,6 +179,7 @@
           if (opened) {
             lastResult =
               'Unlock failed (authentication failed). If your password is correct, the vault may be corrupted. Recovery wizard opened.'
+            pushToast({ kind: 'error', title: 'Unlock failed', detail: lastResult })
             return
           }
         } catch {
@@ -160,6 +187,13 @@
         }
       }
       lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Unlock failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: unlockVault
+      })
     }
   }
 
@@ -228,10 +262,12 @@
       masterPassword = ''
       closeRecoveryWizard()
       lastResult = `Recovered vault from backup and unlocked: ${status.path}`
+      pushToast({ kind: 'success', title: 'Recovered vault from backup', timeoutMs: 4500 })
       await refreshRecents()
       await refreshItems()
     } catch (error) {
       recoveryError = formatError(error)
+      pushToast({ kind: 'error', title: 'Recovery failed', detail: recoveryError })
     } finally {
       recoveryBusy = false
     }
@@ -253,8 +289,17 @@
       closeRecoveryWizard()
       clearRevealedPassword()
       lastResult = 'Vault locked'
+      pushToast({ kind: 'info', title: 'Vault locked', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Lock vault failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: lockVault
+      })
     }
   }
 
@@ -277,6 +322,13 @@
       }
     } catch (error) {
       settingsError = formatError(error)
+      pushToast({
+        kind: 'error',
+        title: 'Load settings failed',
+        detail: settingsError,
+        retryLabel: 'Retry',
+        retry: refreshConfig
+      })
     }
   }
 
@@ -305,9 +357,17 @@
         value: String(settingsLogLevel)
       })
       lastResult = 'Saved settings'
+      pushToast({ kind: 'success', title: 'Saved settings', timeoutMs: 3500 })
       await refreshConfig()
     } catch (error) {
       settingsError = formatError(error)
+      pushToast({
+        kind: 'error',
+        title: 'Save settings failed',
+        detail: settingsError,
+        retryLabel: 'Retry',
+        retry: saveSettings
+      })
     } finally {
       settingsSaving = false
     }
@@ -326,8 +386,11 @@
       await window.npw.vaultRecentsRemove({ path: vault.path })
       await refreshRecents()
       lastResult = `Removed ${vault.path} from recents`
+      pushToast({ kind: 'success', title: 'Removed recent vault', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Remove recent failed', detail: message })
     }
   }
 
@@ -340,7 +403,9 @@
       vaultPath = picked
       lastResult = `Selected vault: ${picked}`
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Open vault dialog failed', detail: message })
     }
   }
 
@@ -353,7 +418,9 @@
       vaultPath = picked
       lastResult = `Selected new vault path: ${picked}`
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Create vault dialog failed', detail: message })
     }
   }
 
@@ -372,7 +439,15 @@
       }
       lastResult = `Loaded ${items.length} items`
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Load items failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: refreshItems
+      })
     }
   }
 
@@ -387,8 +462,11 @@
         await selectItem(created)
       }
       lastResult = `Created note ${id}`
+      pushToast({ kind: 'success', title: 'Created note', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Create note failed', detail: message })
     }
   }
 
@@ -412,8 +490,11 @@
         await selectItem(created)
       }
       lastResult = `Created login ${id}`
+      pushToast({ kind: 'success', title: 'Created login', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Create login failed', detail: message })
     }
   }
 
@@ -436,8 +517,11 @@
       clearTotpInterval()
       await refreshItems()
       lastResult = deleted ? `Deleted item ${id}` : `Item not found: ${id}`
+      pushToast({ kind: 'info', title: deleted ? 'Deleted item' : 'Item not found', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Delete failed', detail: message })
     }
   }
 
@@ -495,7 +579,9 @@
 
       lastResult = `Item type ${item.itemType} detail view not implemented yet`
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Load item failed', detail: message })
     }
   }
 
@@ -506,12 +592,21 @@
     try {
       await window.npw.loginCopyUsername({ id: selectedItem.id })
       const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
-      lastResult =
+      const message =
         Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
           ? `Copied username to clipboard (auto-clears in ${timeoutSeconds}s)`
           : 'Copied username to clipboard (auto-clear disabled)'
+      lastResult = message
+      pushToast({ kind: 'success', title: message, timeoutMs: 4000 })
     } catch (error) {
       lastResult = formatError(error)
+      pushToast({
+        kind: 'error',
+        title: 'Copy username failed',
+        detail: formatError(error),
+        retryLabel: 'Retry',
+        retry: copyUsername
+      })
     }
   }
 
@@ -522,12 +617,21 @@
     try {
       await window.npw.loginCopyPassword({ id: selectedItem.id })
       const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
-      lastResult =
+      const message =
         Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
           ? `Copied password to clipboard (auto-clears in ${timeoutSeconds}s)`
           : 'Copied password to clipboard (auto-clear disabled)'
+      lastResult = message
+      pushToast({ kind: 'success', title: message, timeoutMs: 4000 })
     } catch (error) {
       lastResult = formatError(error)
+      pushToast({
+        kind: 'error',
+        title: 'Copy password failed',
+        detail: formatError(error),
+        retryLabel: 'Retry',
+        retry: copyPassword
+      })
     }
   }
 
@@ -550,8 +654,16 @@
         revealPasswordTimeoutId = null
       }, 30_000)
       lastResult = 'Password revealed for 30 seconds'
+      pushToast({ kind: 'info', title: 'Password revealed for 30 seconds', timeoutMs: 4000 })
     } catch (error) {
       lastResult = formatError(error)
+      pushToast({
+        kind: 'error',
+        title: 'Reveal password failed',
+        detail: formatError(error),
+        retryLabel: 'Retry',
+        retry: revealPassword
+      })
     }
   }
 
@@ -571,8 +683,11 @@
       clearRevealedPassword()
       const mode = await window.npw.loginGenerateReplacePassword({ id: selectedItem.id })
       lastResult = `Generated new ${mode} password and replaced`
+      pushToast({ kind: 'success', title: 'Generated and replaced password', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'Generate and replace failed', detail: message })
     }
   }
 
@@ -583,12 +698,21 @@
     try {
       await window.npw.loginCopyTotp({ id: selectedItem.id })
       const timeoutSeconds = Number(settingsClipboardTimeoutSeconds)
-      lastResult =
+      const message =
         Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
           ? `Copied TOTP to clipboard (auto-clears in ${timeoutSeconds}s)`
           : 'Copied TOTP to clipboard (auto-clear disabled)'
+      lastResult = message
+      pushToast({ kind: 'success', title: message, timeoutMs: 4000 })
     } catch (error) {
       lastResult = formatError(error)
+      pushToast({
+        kind: 'error',
+        title: 'Copy TOTP failed',
+        detail: formatError(error),
+        retryLabel: 'Retry',
+        retry: copyTotp
+      })
     }
   }
 
@@ -610,8 +734,17 @@
       totpQrUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
       totpQrVisible = true
       lastResult = 'Rendered TOTP QR code'
+      pushToast({ kind: 'info', title: 'Rendered TOTP QR code', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Export QR failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: toggleTotpQr
+      })
     }
   }
 
@@ -622,8 +755,17 @@
     try {
       await window.npw.passkeyOpenSite({ id: selectedItem.id })
       lastResult = 'Opened relying party site'
+      pushToast({ kind: 'info', title: 'Opened relying party site', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Open site failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: openPasskeySite
+      })
     }
   }
 
@@ -631,8 +773,17 @@
     try {
       await window.npw.passkeyOpenManager()
       lastResult = 'Opened OS passkey manager'
+      pushToast({ kind: 'info', title: 'Opened OS passkey manager', timeoutMs: 3500 })
     } catch (error) {
-      lastResult = formatError(error)
+      const message = formatError(error)
+      lastResult = message
+      pushToast({
+        kind: 'error',
+        title: 'Open passkey manager failed',
+        detail: message,
+        retryLabel: 'Retry',
+        retry: openPasskeyManager
+      })
     }
   }
 
@@ -652,6 +803,39 @@
 </script>
 
 <main class="shell">
+  {#if toasts.length > 0}
+    <div class="toast-host" aria-live="polite">
+      {#each toasts as toast (toast.id)}
+        <div class="toast" data-kind={toast.kind}>
+          <div class="toast-header">
+            <strong>{toast.title}</strong>
+            <button
+              class="toast-close secondary"
+              type="button"
+              on:click={() => dismissToast(toast.id)}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+          {#if toast.detail}
+            <details>
+              <summary>Details</summary>
+              <pre class="toast-detail">{toast.detail}</pre>
+            </details>
+          {/if}
+          {#if toast.retry}
+            <div class="toast-actions">
+              <button type="button" on:click={() => toast.retry()}>
+                {toast.retryLabel ?? 'Retry'}
+              </button>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <h1>{APP_TITLE}</h1>
   <p>{bridgeStatus}</p>
 
@@ -1162,6 +1346,64 @@
 
   .result {
     min-height: 3.5rem;
+  }
+
+  .toast-host {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    width: min(26rem, calc(100vw - 2rem));
+    display: grid;
+    gap: 0.65rem;
+    z-index: 1100;
+  }
+
+  .toast {
+    border: 1px solid #93a8b5;
+    border-radius: 0.75rem;
+    background: #ffffff;
+    padding: 0.75rem;
+    box-shadow: 0 16px 45px rgba(0, 0, 0, 0.22);
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .toast[data-kind='error'] {
+    border-color: #f1a1a1;
+    background: #fff1f1;
+  }
+
+  .toast[data-kind='success'] {
+    border-color: #8fd8a6;
+    background: #f0fdf4;
+  }
+
+  .toast[data-kind='info'] {
+    border-color: #8ab7ea;
+    background: #eff6ff;
+  }
+
+  .toast-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .toast-close {
+    padding: 0 0.55rem;
+    height: 2rem;
+  }
+
+  .toast-detail {
+    background: rgba(35, 70, 95, 0.08);
+    border-color: rgba(35, 70, 95, 0.2);
+  }
+
+  .toast-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
   }
 
   .items h2 {
