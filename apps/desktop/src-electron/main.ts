@@ -149,6 +149,37 @@ type VaultRecoveryResult = {
   corruptPath: string | null
 }
 
+type ImportDuplicate = {
+  sourceIndex: number
+  itemType: string
+  title: string
+  username: string | null
+  primaryUrl: string | null
+  existingId: string
+  existingTitle: string
+  existingUsername: string | null
+  existingPrimaryUrl: string | null
+}
+
+type ImportPreview = {
+  importType: string
+  candidates: number
+  duplicates: ImportDuplicate[]
+  warnings: string[]
+}
+
+type ImportDuplicateDecision = {
+  sourceIndex: number
+  action: string
+}
+
+type ImportResult = {
+  imported: number
+  skipped: number
+  overwritten: number
+  warnings: string[]
+}
+
 type UrlEntryInput = {
   url: string
   matchType?: string | null
@@ -227,6 +258,13 @@ type VaultSession = {
   addLogin: (input: AddLoginInput) => string
   addPasskeyRef: (input: AddPasskeyRefInput) => string
   deleteItem: (id: string) => boolean
+  importCsvPreview: (inputPath: string) => ImportPreview
+  importCsvApply: (inputPath: string, decisions: ImportDuplicateDecision[]) => ImportResult
+  importBitwardenJsonPreview: (inputPath: string) => ImportPreview
+  importBitwardenJsonApply: (inputPath: string, decisions: ImportDuplicateDecision[]) => ImportResult
+  exportCsv: (outputPath: string, includeSecrets: boolean) => number
+  exportJson: (outputPath: string, includeSecrets: boolean) => number
+  exportEncrypted: (outputPath: string, exportPassword: string, redacted: boolean) => number
 }
 
 type AddonApi = {
@@ -374,6 +412,61 @@ function registerIpcHandlers(api: AddonApi) {
     return ensureNpwExtension(result.filePath)
   })
 
+  ipcMain.handle('import.dialog.csv', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'CSV', extensions: ['csv'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('import.dialog.bitwarden', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Bitwarden JSON', extensions: ['json'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('export.dialog.csv', async () => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'npw-export.csv',
+      filters: [{ name: 'CSV', extensions: ['csv'] }]
+    })
+    if (result.canceled || !result.filePath) {
+      return null
+    }
+    return result.filePath
+  })
+
+  ipcMain.handle('export.dialog.json', async () => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'npw-export.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) {
+      return null
+    }
+    return result.filePath
+  })
+
+  ipcMain.handle('export.dialog.encrypted', async () => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'npw-export.npw',
+      filters: [{ name: 'npw Vault', extensions: ['npw'] }]
+    })
+    if (result.canceled || !result.filePath) {
+      return null
+    }
+    return ensureNpwExtension(result.filePath)
+  })
+
   ipcMain.handle('vault.create', (_event, payload: { path: string; masterPassword: string; label?: string }) => {
     const safePath = validateText(payload.path, 'path', 4096)
     const safePassword = validateText(payload.masterPassword, 'masterPassword', 1024)
@@ -428,6 +521,91 @@ function registerIpcHandlers(api: AddonApi) {
     const query = payload?.query ? validateOptionalText(payload.query, 'query', 256) : null
     return session.listItems(query)
   })
+
+  ipcMain.handle('import.csv.preview', (_event, payload: { inputPath: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeInputPath = validateText(payload.inputPath, 'inputPath', 4096)
+    return session.importCsvPreview(safeInputPath)
+  })
+
+  ipcMain.handle('import.csv.apply', (_event, payload: { inputPath: string; decisions: ImportDuplicateDecision[] }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeInputPath = validateText(payload.inputPath, 'inputPath', 4096)
+    const safeDecisions = validateImportDecisions(payload.decisions, 'decisions')
+    return session.importCsvApply(safeInputPath, safeDecisions)
+  })
+
+  ipcMain.handle('import.bitwarden.preview', (_event, payload: { inputPath: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeInputPath = validateText(payload.inputPath, 'inputPath', 4096)
+    return session.importBitwardenJsonPreview(safeInputPath)
+  })
+
+  ipcMain.handle('import.bitwarden.apply', (_event, payload: { inputPath: string; decisions: ImportDuplicateDecision[] }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeInputPath = validateText(payload.inputPath, 'inputPath', 4096)
+    const safeDecisions = validateImportDecisions(payload.decisions, 'decisions')
+    return session.importBitwardenJsonApply(safeInputPath, safeDecisions)
+  })
+
+  ipcMain.handle('export.csv', (_event, payload: { outputPath: string; includeSecrets: boolean; acknowledged?: boolean }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeOutputPath = validateText(payload.outputPath, 'outputPath', 4096)
+    if (typeof payload.includeSecrets !== 'boolean') {
+      throw new Error('includeSecrets must be a boolean')
+    }
+    if (payload.includeSecrets && payload.acknowledged !== true) {
+      throw new Error('plaintext export requires acknowledgement')
+    }
+    return session.exportCsv(safeOutputPath, payload.includeSecrets)
+  })
+
+  ipcMain.handle('export.json', (_event, payload: { outputPath: string; includeSecrets: boolean; acknowledged?: boolean }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeOutputPath = validateText(payload.outputPath, 'outputPath', 4096)
+    if (typeof payload.includeSecrets !== 'boolean') {
+      throw new Error('includeSecrets must be a boolean')
+    }
+    if (payload.includeSecrets && payload.acknowledged !== true) {
+      throw new Error('plaintext export requires acknowledgement')
+    }
+    return session.exportJson(safeOutputPath, payload.includeSecrets)
+  })
+
+  ipcMain.handle(
+    'export.encrypted',
+    (_event, payload: { outputPath: string; exportPassword: string; masterPassword: string; redacted: boolean }) => {
+      if (!session) {
+        throw new Error('vault is locked')
+      }
+      const safeOutputPath = validateText(payload.outputPath, 'outputPath', 4096)
+      const exportPassword = validateText(payload.exportPassword, 'exportPassword', 1024)
+      const masterPassword = validateText(payload.masterPassword, 'masterPassword', 1024)
+      if (exportPassword === masterPassword) {
+        throw new Error('export password must differ from the vault master password')
+      }
+      if (typeof payload.redacted !== 'boolean') {
+        throw new Error('redacted must be a boolean')
+      }
+
+      // Best-effort enforcement: validate the user entered the correct master password before comparing.
+      api.vaultCheck(session.status().path, masterPassword)
+
+      return session.exportEncrypted(safeOutputPath, exportPassword, payload.redacted)
+    }
+  )
 
   ipcMain.handle('item.login.get', (_event, payload: { id: string }) => {
     if (!session) {
@@ -935,6 +1113,37 @@ function validateUrlEntries(value: unknown, field: string): UrlEntryInput[] {
     urls.push({ url: urlTrimmed, matchType })
   }
   return urls
+}
+
+function validateImportDecisions(value: unknown, field: string): ImportDuplicateDecision[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`)
+  }
+  const decisions: ImportDuplicateDecision[] = []
+  const seen = new Set<number>()
+  for (const [index, entry] of value.entries()) {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`${field}[${index}] must be an object`)
+    }
+    const candidate = entry as Partial<ImportDuplicateDecision>
+    const sourceIndex = Number(candidate.sourceIndex)
+    if (!Number.isFinite(sourceIndex) || !Number.isInteger(sourceIndex) || sourceIndex < 0) {
+      throw new Error(`${field}[${index}].sourceIndex must be a non-negative integer`)
+    }
+    if (typeof candidate.action !== 'string') {
+      throw new Error(`${field}[${index}].action must be a string`)
+    }
+    const action = candidate.action.trim()
+    if (action !== 'skip' && action !== 'overwrite' && action !== 'keep_both') {
+      throw new Error(`${field}[${index}].action must be one of: skip, overwrite, keep_both`)
+    }
+    if (seen.has(sourceIndex)) {
+      throw new Error(`${field}[${index}].sourceIndex is duplicated`)
+    }
+    seen.add(sourceIndex)
+    decisions.push({ sourceIndex, action })
+  }
+  return decisions
 }
 
 function sha256Base64(token: Buffer, value: string): string {

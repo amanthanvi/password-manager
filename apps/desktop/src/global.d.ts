@@ -99,6 +99,37 @@ declare global {
     remaining: number
   }
 
+  interface ImportDuplicate {
+    sourceIndex: number
+    itemType: string
+    title: string
+    username: string | null
+    primaryUrl: string | null
+    existingId: string
+    existingTitle: string
+    existingUsername: string | null
+    existingPrimaryUrl: string | null
+  }
+
+  interface ImportPreview {
+    importType: string
+    candidates: number
+    duplicates: ImportDuplicate[]
+    warnings: string[]
+  }
+
+  interface ImportDuplicateDecision {
+    sourceIndex: number
+    action: 'skip' | 'overwrite' | 'keep_both'
+  }
+
+  interface ImportResult {
+    imported: number
+    skipped: number
+    overwritten: number
+    warnings: string[]
+  }
+
   interface Window {
     npw: {
       coreBanner: () => Promise<string>
@@ -108,6 +139,11 @@ declare global {
       vaultRecentsRemove: (payload: { path: string }) => Promise<boolean>
       vaultDialogOpen: () => Promise<string | null>
       vaultDialogCreate: () => Promise<string | null>
+      importDialogCsv: () => Promise<string | null>
+      importDialogBitwarden: () => Promise<string | null>
+      exportDialogCsv: () => Promise<string | null>
+      exportDialogJson: () => Promise<string | null>
+      exportDialogEncrypted: () => Promise<string | null>
       vaultCreate: (payload: { path: string; masterPassword: string; label?: string }) => Promise<boolean>
       vaultStatus: (payload: { path: string }) => Promise<VaultStatus>
       vaultCheck: (payload: { path: string; masterPassword: string }) => Promise<VaultStatus>
@@ -117,6 +153,18 @@ declare global {
       vaultLock: () => Promise<boolean>
       configLoad: () => Promise<AppConfig>
       configSet: (payload: { key: string; value: string }) => Promise<AppConfig>
+      importCsvPreview: (payload: { inputPath: string }) => Promise<ImportPreview>
+      importCsvApply: (payload: { inputPath: string; decisions: ImportDuplicateDecision[] }) => Promise<ImportResult>
+      importBitwardenPreview: (payload: { inputPath: string }) => Promise<ImportPreview>
+      importBitwardenApply: (payload: { inputPath: string; decisions: ImportDuplicateDecision[] }) => Promise<ImportResult>
+      exportCsv: (payload: { outputPath: string; includeSecrets: boolean; acknowledged?: boolean }) => Promise<number>
+      exportJson: (payload: { outputPath: string; includeSecrets: boolean; acknowledged?: boolean }) => Promise<number>
+      exportEncrypted: (payload: {
+        outputPath: string
+        exportPassword: string
+        masterPassword: string
+        redacted: boolean
+      }) => Promise<number>
       itemList: (payload: { query?: string | null }) => Promise<ItemSummary[]>
       loginGet: (payload: { id: string }) => Promise<LoginDetail>
       noteGet: (payload: { id: string }) => Promise<NoteDetail>

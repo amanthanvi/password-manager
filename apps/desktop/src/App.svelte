@@ -94,6 +94,20 @@
   let filterType = 'all'
   let filterFavoritesOnly = false
   let filterTag = ''
+  let importType = null
+  let importInputPath = ''
+  let importPreview = null
+  let importDecisions = {}
+  let importBusy = false
+  let importError = ''
+  let encryptedExportVisible = false
+  let encryptedExportOutputPath = ''
+  let encryptedExportPassword = ''
+  let encryptedExportPasswordConfirm = ''
+  let encryptedExportMasterPassword = ''
+  let encryptedExportRedacted = false
+  let encryptedExportBusy = false
+  let encryptedExportError = ''
 
   $: availableTags = (() => {
     const seen = Object.create(null)
@@ -244,6 +258,8 @@
       totpQrUrl = null
       totpQrVisible = false
       closeTotpImport()
+      clearImportState()
+      closeEncryptedExport()
       clearTotpInterval()
       masterPassword = ''
       newNoteTitle = ''
@@ -474,6 +490,8 @@
       totpQrUrl = null
       totpQrVisible = false
       closeTotpImport()
+      clearImportState()
+      closeEncryptedExport()
       clearTotpInterval()
       newNoteTitle = ''
       newNoteBody = ''
@@ -658,6 +676,224 @@
         retryLabel: 'Retry',
         retry: refreshItems
       })
+    }
+  }
+
+  const clearImportState = () => {
+    importType = null
+    importInputPath = ''
+    importPreview = null
+    importDecisions = {}
+    importBusy = false
+    importError = ''
+  }
+
+  const startImportCsv = async () => {
+    importBusy = true
+    importError = ''
+    try {
+      const picked = await window.npw.importDialogCsv()
+      if (!picked) {
+        return
+      }
+      importType = 'csv'
+      importInputPath = picked
+      importPreview = await window.npw.importCsvPreview({ inputPath: picked })
+      const nextDecisions = {}
+      for (const dup of importPreview.duplicates ?? []) {
+        nextDecisions[dup.sourceIndex] = 'skip'
+      }
+      importDecisions = nextDecisions
+      lastResult = `Import preview loaded (${importPreview.candidates} candidates)`
+      pushToast({ kind: 'info', title: 'CSV import preview ready', timeoutMs: 3500 })
+    } catch (error) {
+      importError = formatError(error)
+      lastResult = importError
+      pushToast({ kind: 'error', title: 'CSV import preview failed', detail: importError })
+      clearImportState()
+    } finally {
+      importBusy = false
+    }
+  }
+
+  const startImportBitwarden = async () => {
+    importBusy = true
+    importError = ''
+    try {
+      const picked = await window.npw.importDialogBitwarden()
+      if (!picked) {
+        return
+      }
+      importType = 'bitwarden'
+      importInputPath = picked
+      importPreview = await window.npw.importBitwardenPreview({ inputPath: picked })
+      const nextDecisions = {}
+      for (const dup of importPreview.duplicates ?? []) {
+        nextDecisions[dup.sourceIndex] = 'skip'
+      }
+      importDecisions = nextDecisions
+      lastResult = `Import preview loaded (${importPreview.candidates} candidates)`
+      pushToast({ kind: 'info', title: 'Bitwarden import preview ready', timeoutMs: 3500 })
+    } catch (error) {
+      importError = formatError(error)
+      lastResult = importError
+      pushToast({ kind: 'error', title: 'Bitwarden import preview failed', detail: importError })
+      clearImportState()
+    } finally {
+      importBusy = false
+    }
+  }
+
+  const setImportDecision = (sourceIndex, action) => {
+    importDecisions = { ...importDecisions, [sourceIndex]: action }
+  }
+
+  const applyImport = async () => {
+    if (!importPreview || !importType || !importInputPath) {
+      return
+    }
+    importBusy = true
+    importError = ''
+    try {
+      const decisions = Object.entries(importDecisions).map(([sourceIndex, action]) => ({
+        sourceIndex: Number(sourceIndex),
+        action: String(action)
+      }))
+      const result =
+        importType === 'csv'
+          ? await window.npw.importCsvApply({ inputPath: importInputPath, decisions })
+          : await window.npw.importBitwardenApply({ inputPath: importInputPath, decisions })
+
+      await refreshItems()
+      lastResult = `Imported ${result.imported} items (skipped ${result.skipped}, overwritten ${result.overwritten})`
+      pushToast({ kind: 'success', title: 'Import complete', detail: lastResult, timeoutMs: 4500 })
+      clearImportState()
+    } catch (error) {
+      importError = formatError(error)
+      lastResult = importError
+      pushToast({
+        kind: 'error',
+        title: 'Import failed',
+        detail: importError,
+        retryLabel: 'Retry',
+        retry: applyImport
+      })
+    } finally {
+      importBusy = false
+    }
+  }
+
+  const exportCsv = async ({ includeSecrets }) => {
+    try {
+      const outputPath = await window.npw.exportDialogCsv()
+      if (!outputPath) {
+        return
+      }
+      let acknowledged = false
+      if (includeSecrets) {
+        acknowledged = confirm('Warning: plaintext export includes passwords and note bodies. Continue?')
+        if (!acknowledged) {
+          return
+        }
+      }
+      const count = await window.npw.exportCsv({ outputPath, includeSecrets, acknowledged })
+      lastResult = `Exported ${count} items to ${outputPath}`
+      pushToast({ kind: 'success', title: lastResult, timeoutMs: 4500 })
+    } catch (error) {
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'CSV export failed', detail: message })
+    }
+  }
+
+  const exportJson = async ({ includeSecrets }) => {
+    try {
+      const outputPath = await window.npw.exportDialogJson()
+      if (!outputPath) {
+        return
+      }
+      let acknowledged = false
+      if (includeSecrets) {
+        acknowledged = confirm('Warning: plaintext export includes passwords and note bodies. Continue?')
+        if (!acknowledged) {
+          return
+        }
+      }
+      const count = await window.npw.exportJson({ outputPath, includeSecrets, acknowledged })
+      lastResult = `Exported ${count} items to ${outputPath}`
+      pushToast({ kind: 'success', title: lastResult, timeoutMs: 4500 })
+    } catch (error) {
+      const message = formatError(error)
+      lastResult = message
+      pushToast({ kind: 'error', title: 'JSON export failed', detail: message })
+    }
+  }
+
+  const openEncryptedExport = async () => {
+    encryptedExportError = ''
+    const picked = await window.npw.exportDialogEncrypted()
+    if (!picked) {
+      return
+    }
+    encryptedExportOutputPath = picked
+    encryptedExportPassword = ''
+    encryptedExportPasswordConfirm = ''
+    encryptedExportMasterPassword = ''
+    encryptedExportRedacted = false
+    encryptedExportVisible = true
+  }
+
+  const closeEncryptedExport = () => {
+    encryptedExportVisible = false
+    encryptedExportOutputPath = ''
+    encryptedExportPassword = ''
+    encryptedExportPasswordConfirm = ''
+    encryptedExportMasterPassword = ''
+    encryptedExportRedacted = false
+    encryptedExportBusy = false
+    encryptedExportError = ''
+  }
+
+  const submitEncryptedExport = async () => {
+    if (!encryptedExportOutputPath) {
+      return
+    }
+    if (encryptedExportPassword.trim().length === 0) {
+      encryptedExportError = 'Export password cannot be empty'
+      return
+    }
+    if (encryptedExportPassword !== encryptedExportPasswordConfirm) {
+      encryptedExportError = 'Export passwords do not match'
+      return
+    }
+    if (encryptedExportMasterPassword.trim().length === 0) {
+      encryptedExportError = 'Master password is required to validate encrypted export'
+      return
+    }
+    if (encryptedExportPassword === encryptedExportMasterPassword) {
+      encryptedExportError = 'Export password must differ from the vault master password'
+      return
+    }
+
+    encryptedExportBusy = true
+    encryptedExportError = ''
+    try {
+      const outputPath = encryptedExportOutputPath
+      const count = await window.npw.exportEncrypted({
+        outputPath,
+        exportPassword: encryptedExportPassword,
+        masterPassword: encryptedExportMasterPassword,
+        redacted: encryptedExportRedacted
+      })
+      lastResult = `Wrote encrypted export with ${count} items to ${outputPath}`
+      pushToast({ kind: 'success', title: 'Encrypted export written', detail: lastResult, timeoutMs: 4500 })
+      closeEncryptedExport()
+    } catch (error) {
+      encryptedExportError = formatError(error)
+      lastResult = encryptedExportError
+      pushToast({ kind: 'error', title: 'Encrypted export failed', detail: encryptedExportError })
+    } finally {
+      encryptedExportBusy = false
     }
   }
 
@@ -1450,6 +1686,136 @@
   </label>
 
   {#if status}
+    <section class="import-export">
+      <h2>Import / Export</h2>
+      <div class="import-export-grid">
+        <div class="import-panel">
+          <h3>Import</h3>
+          <p class="muted">Imports are previewed first. Suspected duplicates require a decision per item.</p>
+          <div class="actions">
+            <button type="button" on:click={startImportCsv} disabled={importBusy}>Import CSV…</button>
+            <button type="button" on:click={startImportBitwarden} disabled={importBusy}>Import Bitwarden JSON…</button>
+          </div>
+
+          {#if importPreview}
+            <div class="import-preview">
+              <p class="muted">
+                Preview loaded ({importPreview.importType}) from <span class="mono">{importInputPath}</span>
+              </p>
+              <p class="muted">
+                {importPreview.candidates} candidates · {importPreview.duplicates.length} duplicates
+              </p>
+
+              {#if importPreview.warnings && importPreview.warnings.length > 0}
+                <details>
+                  <summary>Warnings ({importPreview.warnings.length})</summary>
+                  <ul class="plain-list">
+                    {#each importPreview.warnings as warning, index (index)}
+                      <li class="muted">{warning}</li>
+                    {/each}
+                  </ul>
+                </details>
+              {/if}
+
+              {#if importPreview.duplicates && importPreview.duplicates.length > 0}
+                <div class="duplicate-list" role="list">
+                  {#each importPreview.duplicates as dup (dup.sourceIndex)}
+                    <div class="duplicate" role="listitem">
+                      <div class="duplicate-meta">
+                        <strong>{dup.title}</strong>
+                        <div class="muted">
+                          Imported: {dup.itemType}
+                          {#if dup.username}
+                            · {dup.username}
+                          {/if}
+                          {#if dup.primaryUrl}
+                            · {dup.primaryUrl}
+                          {/if}
+                        </div>
+                        <div class="muted">
+                          Existing: <span class="mono">{dup.existingId.slice(0, 8)}</span> · {dup.existingTitle}
+                          {#if dup.existingUsername}
+                            · {dup.existingUsername}
+                          {/if}
+                          {#if dup.existingPrimaryUrl}
+                            · {dup.existingPrimaryUrl}
+                          {/if}
+                        </div>
+                      </div>
+                      <div class="duplicate-actions">
+                        <label class="inline">
+                          <input
+                            type="radio"
+                            name={`dup-${dup.sourceIndex}`}
+                            value="skip"
+                            checked={(importDecisions[dup.sourceIndex] ?? 'skip') === 'skip'}
+                            on:change={() => setImportDecision(dup.sourceIndex, 'skip')}
+                            disabled={importBusy}
+                          />
+                          Skip
+                        </label>
+                        <label class="inline">
+                          <input
+                            type="radio"
+                            name={`dup-${dup.sourceIndex}`}
+                            value="overwrite"
+                            checked={(importDecisions[dup.sourceIndex] ?? 'skip') === 'overwrite'}
+                            on:change={() => setImportDecision(dup.sourceIndex, 'overwrite')}
+                            disabled={importBusy}
+                          />
+                          Overwrite
+                        </label>
+                        <label class="inline">
+                          <input
+                            type="radio"
+                            name={`dup-${dup.sourceIndex}`}
+                            value="keep_both"
+                            checked={(importDecisions[dup.sourceIndex] ?? 'skip') === 'keep_both'}
+                            on:change={() => setImportDecision(dup.sourceIndex, 'keep_both')}
+                            disabled={importBusy}
+                          />
+                          Keep both
+                        </label>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <p class="muted">No suspected duplicates found.</p>
+              {/if}
+
+              {#if importError}
+                <p class="callout">{importError}</p>
+              {/if}
+
+              <div class="actions">
+                <button type="button" on:click={applyImport} disabled={importBusy}>
+                  {importBusy ? 'Importing…' : 'Apply Import'}
+                </button>
+                <button class="secondary" type="button" on:click={clearImportState} disabled={importBusy}>Clear Preview</button>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="export-panel">
+          <h3>Export</h3>
+          <p class="muted">
+            Redacted exports exclude passwords and note bodies. Plaintext exports require explicit confirmation.
+          </p>
+          <div class="actions">
+            <button type="button" on:click={() => exportCsv({ includeSecrets: false })}>Export CSV (redacted)…</button>
+            <button type="button" on:click={() => exportCsv({ includeSecrets: true })}>Export CSV (plaintext)…</button>
+            <button type="button" on:click={() => exportJson({ includeSecrets: false })}>Export JSON (redacted)…</button>
+            <button type="button" on:click={() => exportJson({ includeSecrets: true })}>Export JSON (plaintext)…</button>
+            <button type="button" on:click={openEncryptedExport}>Encrypted Export…</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  {/if}
+
+  {#if status}
     <section class="add-login">
       <h2>Add Login</h2>
       <label>
@@ -1958,6 +2324,54 @@
     </div>
   {/if}
 
+  {#if encryptedExportVisible}
+    <div class="modal-backdrop">
+      <dialog class="modal" open aria-labelledby="encrypted-export-title">
+        <h2 id="encrypted-export-title">Encrypted Export</h2>
+        <p class="muted">
+          Writes a portable <span class="mono">.npw</span> export protected by a new export password. The export password
+          MUST differ from the vault master password.
+        </p>
+        <p class="muted">
+          Output path: <span class="mono">{encryptedExportOutputPath}</span>
+        </p>
+
+        <label>
+          Export password
+          <input type="password" bind:value={encryptedExportPassword} disabled={encryptedExportBusy} />
+        </label>
+
+        <label>
+          Confirm export password
+          <input type="password" bind:value={encryptedExportPasswordConfirm} disabled={encryptedExportBusy} />
+        </label>
+
+        <label>
+          Master password (verification)
+          <input type="password" bind:value={encryptedExportMasterPassword} disabled={encryptedExportBusy} />
+        </label>
+
+        <label class="inline">
+          <input type="checkbox" bind:checked={encryptedExportRedacted} disabled={encryptedExportBusy} />
+          Redacted export (exclude secrets)
+        </label>
+
+        {#if encryptedExportError}
+          <p class="callout">{encryptedExportError}</p>
+        {/if}
+
+        <div class="actions">
+          <button class="secondary" type="button" on:click={closeEncryptedExport} disabled={encryptedExportBusy}>
+            Cancel
+          </button>
+          <button type="button" on:click={submitEncryptedExport} disabled={encryptedExportBusy}>
+            {encryptedExportBusy ? 'Working…' : 'Write Encrypted Export'}
+          </button>
+        </div>
+      </dialog>
+    </div>
+  {/if}
+
   {#if recoveryVisible}
     <div class="modal-backdrop">
       <dialog class="modal" open aria-labelledby="recovery-title">
@@ -2065,6 +2479,62 @@
   .add-note h2,
   .add-login h2 {
     margin: 0;
+  }
+
+  .import-export {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #93a8b5;
+    border-radius: 0.75rem;
+    background: #f4fbff;
+  }
+
+  .import-export h2 {
+    margin: 0;
+  }
+
+  .import-export-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    align-items: start;
+  }
+
+  .import-preview {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .plain-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.25rem;
+  }
+
+  .duplicate-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .duplicate {
+    border: 1px solid #93a8b5;
+    border-radius: 0.5rem;
+    background: #ffffff;
+    padding: 0.6rem 0.75rem;
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .duplicate-meta {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .duplicate-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
 
   .recent-list {

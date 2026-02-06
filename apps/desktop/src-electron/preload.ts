@@ -123,6 +123,37 @@ type VaultRecoveryResult = {
   corruptPath: string | null
 }
 
+type ImportDuplicate = {
+  sourceIndex: number
+  itemType: string
+  title: string
+  username: string | null
+  primaryUrl: string | null
+  existingId: string
+  existingTitle: string
+  existingUsername: string | null
+  existingPrimaryUrl: string | null
+}
+
+type ImportPreview = {
+  importType: string
+  candidates: number
+  duplicates: ImportDuplicate[]
+  warnings: string[]
+}
+
+type ImportDuplicateDecision = {
+  sourceIndex: number
+  action: string
+}
+
+type ImportResult = {
+  imported: number
+  skipped: number
+  overwritten: number
+  warnings: string[]
+}
+
 type UrlEntryInput = {
   url: string
   matchType?: string | null
@@ -192,6 +223,11 @@ contextBridge.exposeInMainWorld('npw', {
   vaultRecentsRemove: (payload: { path: string }): Promise<boolean> => ipcRenderer.invoke('vault.recents.remove', payload),
   vaultDialogOpen: (): Promise<string | null> => ipcRenderer.invoke('vault.dialog.open'),
   vaultDialogCreate: (): Promise<string | null> => ipcRenderer.invoke('vault.dialog.create'),
+  importDialogCsv: (): Promise<string | null> => ipcRenderer.invoke('import.dialog.csv'),
+  importDialogBitwarden: (): Promise<string | null> => ipcRenderer.invoke('import.dialog.bitwarden'),
+  exportDialogCsv: (): Promise<string | null> => ipcRenderer.invoke('export.dialog.csv'),
+  exportDialogJson: (): Promise<string | null> => ipcRenderer.invoke('export.dialog.json'),
+  exportDialogEncrypted: (): Promise<string | null> => ipcRenderer.invoke('export.dialog.encrypted'),
   vaultCreate: (payload: { path: string; masterPassword: string; label?: string }): Promise<boolean> =>
     ipcRenderer.invoke('vault.create', payload),
   vaultStatus: (payload: { path: string }): Promise<VaultStatus> => ipcRenderer.invoke('vault.status', payload),
@@ -203,6 +239,19 @@ contextBridge.exposeInMainWorld('npw', {
   vaultUnlock: (payload: { path: string; masterPassword: string }): Promise<VaultStatus> =>
     ipcRenderer.invoke('vault.unlock', payload),
   vaultLock: (): Promise<boolean> => ipcRenderer.invoke('vault.lock'),
+  importCsvPreview: (payload: { inputPath: string }): Promise<ImportPreview> => ipcRenderer.invoke('import.csv.preview', payload),
+  importCsvApply: (payload: { inputPath: string; decisions: ImportDuplicateDecision[] }): Promise<ImportResult> =>
+    ipcRenderer.invoke('import.csv.apply', payload),
+  importBitwardenPreview: (payload: { inputPath: string }): Promise<ImportPreview> =>
+    ipcRenderer.invoke('import.bitwarden.preview', payload),
+  importBitwardenApply: (payload: { inputPath: string; decisions: ImportDuplicateDecision[] }): Promise<ImportResult> =>
+    ipcRenderer.invoke('import.bitwarden.apply', payload),
+  exportCsv: (payload: { outputPath: string; includeSecrets: boolean; acknowledged?: boolean }): Promise<number> =>
+    ipcRenderer.invoke('export.csv', payload),
+  exportJson: (payload: { outputPath: string; includeSecrets: boolean; acknowledged?: boolean }): Promise<number> =>
+    ipcRenderer.invoke('export.json', payload),
+  exportEncrypted: (payload: { outputPath: string; exportPassword: string; masterPassword: string; redacted: boolean }): Promise<number> =>
+    ipcRenderer.invoke('export.encrypted', payload),
   itemList: (payload: { query?: string | null }): Promise<ItemSummary[]> => ipcRenderer.invoke('item.list', payload),
   loginGet: (payload: { id: string }): Promise<LoginDetail> => ipcRenderer.invoke('item.login.get', payload),
   noteGet: (payload: { id: string }): Promise<NoteDetail> => ipcRenderer.invoke('item.note.get', payload),

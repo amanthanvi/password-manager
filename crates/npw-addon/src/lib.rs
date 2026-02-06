@@ -15,6 +15,8 @@ use npw_storage::{
     write_vault_with_lock,
 };
 use qrcode::QrCode;
+use serde::Deserialize;
+use serde_json::json;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -301,6 +303,41 @@ pub struct TotpCode {
     pub code: String,
     pub period: u16,
     pub remaining: u16,
+}
+
+#[napi(object)]
+pub struct ImportDuplicate {
+    pub source_index: u32,
+    pub item_type: String,
+    pub title: String,
+    pub username: Option<String>,
+    pub primary_url: Option<String>,
+    pub existing_id: String,
+    pub existing_title: String,
+    pub existing_username: Option<String>,
+    pub existing_primary_url: Option<String>,
+}
+
+#[napi(object)]
+pub struct ImportPreview {
+    pub import_type: String,
+    pub candidates: u32,
+    pub duplicates: Vec<ImportDuplicate>,
+    pub warnings: Vec<String>,
+}
+
+#[napi(object)]
+pub struct ImportDuplicateDecision {
+    pub source_index: u32,
+    pub action: String,
+}
+
+#[napi(object)]
+pub struct ImportResult {
+    pub imported: u32,
+    pub skipped: u32,
+    pub overwritten: u32,
+    pub warnings: Vec<String>,
 }
 
 #[napi(object)]
@@ -819,6 +856,630 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn import_csv_preview(&self, input_path: String) -> Result<ImportPreview> {
+        let mut reader = csv::ReaderBuilder::new()
+            .flexible(true)
+            .from_path(&input_path)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        let headers = reader
+            .headers()
+            .map_err(|error| error_to_napi(error.to_string()))?
+            .clone();
+        let supported_headers = std::collections::HashSet::from([
+            "type", "title", "username", "password", "url", "notes", "tags", "totp_uri",
+        ]);
+        let mut warnings = Vec::new();
+        for header in &headers {
+            if !supported_headers.contains(header) {
+                warnings.push(format!("ignored unknown column `{header}`"));
+            }
+        }
+
+        let login_index = build_login_duplicate_index(&self.payload);
+        let mut duplicates = Vec::new();
+        let mut candidates = 0_u32;
+
+        for (row_index, result) in reader.records().enumerate() {
+            let row_number = u32::try_from(row_index + 2).unwrap_or(u32::MAX);
+            let row = result.map_err(|error| error_to_napi(error.to_string()))?;
+            let item_type = csv_cell(&headers, &row, "type")
+                .unwrap_or("login")
+                .trim()
+                .to_ascii_lowercase();
+            let title = csv_cell(&headers, &row, "title")
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            if title.is_empty() {
+                warnings.push(format!(
+                    "row {row_number} skipped: missing required `title`"
+                ));
+                continue;
+            }
+
+            match item_type.as_str() {
+                "login" => {
+                    let username = normalize_optional_cell(csv_cell(&headers, &row, "username"));
+                    let primary_url = normalize_optional_cell(csv_cell(&headers, &row, "url"));
+                    let key =
+                        login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
+                    candidates = candidates.saturating_add(1);
+                    if let Some(existing_id) = login_index.get(&key)
+                        && let Some(VaultItem::Login(existing)) =
+                            self.payload.get_item(existing_id.as_str())
+                    {
+                        duplicates.push(ImportDuplicate {
+                            source_index: row_number,
+                            item_type: "login".to_owned(),
+                            title: title.clone(),
+                            username: username.clone(),
+                            primary_url: primary_url.clone(),
+                            existing_id: existing.id.clone(),
+                            existing_title: existing.title.clone(),
+                            existing_username: existing.username.clone(),
+                            existing_primary_url: existing
+                                .urls
+                                .first()
+                                .map(|entry| entry.url.clone()),
+                        });
+                    }
+                }
+                "note" => {
+                    candidates = candidates.saturating_add(1);
+                }
+                other => {
+                    warnings.push(format!(
+                        "row {row_number} skipped: unsupported `type` value `{other}`"
+                    ));
+                }
+            }
+        }
+
+        Ok(ImportPreview {
+            import_type: "csv".to_owned(),
+            candidates,
+            duplicates,
+            warnings,
+        })
+    }
+
+    #[napi]
+    pub fn import_csv_apply(
+        &mut self,
+        input_path: String,
+        decisions: Vec<ImportDuplicateDecision>,
+    ) -> Result<ImportResult> {
+        let now = unix_seconds_now();
+        let decision_map = parse_duplicate_decisions(decisions)?;
+
+        let mut reader = csv::ReaderBuilder::new()
+            .flexible(true)
+            .from_path(&input_path)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        let headers = reader
+            .headers()
+            .map_err(|error| error_to_napi(error.to_string()))?
+            .clone();
+        let supported_headers = std::collections::HashSet::from([
+            "type", "title", "username", "password", "url", "notes", "tags", "totp_uri",
+        ]);
+        let mut warnings = Vec::new();
+        for header in &headers {
+            if !supported_headers.contains(header) {
+                warnings.push(format!("ignored unknown column `{header}`"));
+            }
+        }
+
+        let mut login_index = build_login_duplicate_index(&self.payload);
+        let mut imported = 0_u32;
+        let mut skipped = 0_u32;
+        let mut overwritten = 0_u32;
+
+        for (row_index, result) in reader.records().enumerate() {
+            let row_number = u32::try_from(row_index + 2).unwrap_or(u32::MAX);
+            let row = result.map_err(|error| error_to_napi(error.to_string()))?;
+            let item_type = csv_cell(&headers, &row, "type")
+                .unwrap_or("login")
+                .trim()
+                .to_ascii_lowercase();
+            let title = csv_cell(&headers, &row, "title")
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            if title.is_empty() {
+                skipped = skipped.saturating_add(1);
+                warnings.push(format!(
+                    "row {row_number} skipped: missing required `title`"
+                ));
+                continue;
+            }
+
+            match item_type.as_str() {
+                "login" => {
+                    let username = normalize_optional_cell(csv_cell(&headers, &row, "username"));
+                    let password_field =
+                        normalize_optional_cell(csv_cell(&headers, &row, "password"));
+                    let primary_url = normalize_optional_cell(csv_cell(&headers, &row, "url"));
+                    let notes = normalize_optional_cell(csv_cell(&headers, &row, "notes"));
+                    let raw_tags =
+                        parse_csv_tags(csv_cell(&headers, &row, "tags").unwrap_or_default());
+                    let tags = normalize_tags(Some(raw_tags));
+                    let totp_uri = normalize_optional_cell(csv_cell(&headers, &row, "totp_uri"));
+                    let totp = if let Some(uri) = totp_uri {
+                        match parse_otpauth_uri(&uri) {
+                            Ok(config) => Some(config),
+                            Err(error) => {
+                                skipped = skipped.saturating_add(1);
+                                warnings.push(format!(
+                                    "row {row_number} skipped: invalid `totp_uri` ({error})"
+                                ));
+                                continue;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    let urls = primary_url
+                        .clone()
+                        .map(|value| {
+                            vec![UrlEntry {
+                                url: value,
+                                match_type: UrlMatchType::Exact,
+                            }]
+                        })
+                        .unwrap_or_default();
+                    let key =
+                        login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
+
+                    if let Some(existing_id) = login_index.get(&key).cloned() {
+                        let action = decision_map
+                            .get(&row_number)
+                            .copied()
+                            .unwrap_or(DuplicateAction::Skip);
+                        match action {
+                            DuplicateAction::Skip => {
+                                skipped = skipped.saturating_add(1);
+                                continue;
+                            }
+                            DuplicateAction::Overwrite => {
+                                if let Some(VaultItem::Login(existing)) = self
+                                    .payload
+                                    .items
+                                    .iter_mut()
+                                    .find(|item| item.id() == existing_id)
+                                {
+                                    existing.title = title.clone();
+                                    existing.urls = urls;
+                                    existing.username = username;
+                                    existing.password = password_field;
+                                    existing.totp = totp;
+                                    existing.notes = notes;
+                                    existing.tags = tags;
+                                    existing.favorite = false;
+                                    existing.updated_at = now;
+                                    overwritten = overwritten.saturating_add(1);
+                                    continue;
+                                }
+                            }
+                            DuplicateAction::KeepBoth => {}
+                        }
+                    }
+
+                    let item = VaultItem::Login(LoginItem {
+                        id: Uuid::new_v4().to_string(),
+                        title,
+                        urls,
+                        username,
+                        password: password_field,
+                        totp,
+                        notes,
+                        tags,
+                        favorite: false,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                    let item_id = item.id().to_owned();
+                    self.payload
+                        .add_item(item, now)
+                        .map_err(|error| error_to_napi(error.to_string()))?;
+                    login_index.insert(key, item_id);
+                    imported = imported.saturating_add(1);
+                }
+                "note" => {
+                    let body = csv_cell(&headers, &row, "notes")
+                        .unwrap_or_default()
+                        .to_owned();
+                    let raw_tags =
+                        parse_csv_tags(csv_cell(&headers, &row, "tags").unwrap_or_default());
+                    let tags = normalize_tags(Some(raw_tags));
+                    let item = VaultItem::Note(NoteItem {
+                        id: Uuid::new_v4().to_string(),
+                        title,
+                        body,
+                        tags,
+                        favorite: false,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                    self.payload
+                        .add_item(item, now)
+                        .map_err(|error| error_to_napi(error.to_string()))?;
+                    imported = imported.saturating_add(1);
+                }
+                other => {
+                    skipped = skipped.saturating_add(1);
+                    warnings.push(format!(
+                        "row {row_number} skipped: unsupported `type` value `{other}`"
+                    ));
+                }
+            }
+        }
+
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+
+        Ok(ImportResult {
+            imported,
+            skipped,
+            overwritten,
+            warnings,
+        })
+    }
+
+    #[napi]
+    pub fn import_bitwarden_json_preview(&self, input_path: String) -> Result<ImportPreview> {
+        let raw = std::fs::read(&input_path).map_err(|error| error_to_napi(error.to_string()))?;
+        let export: BitwardenExport =
+            serde_json::from_slice(&raw).map_err(|error| error_to_napi(error.to_string()))?;
+
+        let login_index = build_login_duplicate_index(&self.payload);
+        let mut duplicates = Vec::new();
+        let mut warnings = Vec::new();
+        let mut candidates = 0_u32;
+
+        for (index, item) in export.items.iter().enumerate() {
+            let item_number = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            let title = item.name.trim().to_owned();
+            if title.is_empty() {
+                warnings.push(format!(
+                    "item {item_number} skipped: missing required `name` field"
+                ));
+                continue;
+            }
+            if item.r#type != 1 && item.r#type != 2 {
+                warnings.push(format!(
+                    "item {item_number} skipped: unsupported Bitwarden item type `{}`",
+                    item.r#type
+                ));
+                continue;
+            }
+
+            candidates = candidates.saturating_add(1);
+            if item.r#type != 1 {
+                continue;
+            }
+
+            let login = if let Some(login) = &item.login {
+                login
+            } else {
+                warnings.push(format!(
+                    "item {item_number} skipped: type=1 but missing `login` object"
+                ));
+                continue;
+            };
+
+            let username = normalize_optional_cell(login.username.as_deref());
+            let primary_url = login.uris.as_ref().and_then(|uris| {
+                uris.iter()
+                    .find_map(|entry| normalize_optional_cell(entry.uri.as_deref()))
+            });
+            let key = login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
+            if let Some(existing_id) = login_index.get(&key)
+                && let Some(VaultItem::Login(existing)) =
+                    self.payload.get_item(existing_id.as_str())
+            {
+                duplicates.push(ImportDuplicate {
+                    source_index: item_number,
+                    item_type: "login".to_owned(),
+                    title: title.clone(),
+                    username: username.clone(),
+                    primary_url: primary_url.clone(),
+                    existing_id: existing.id.clone(),
+                    existing_title: existing.title.clone(),
+                    existing_username: existing.username.clone(),
+                    existing_primary_url: existing.urls.first().map(|entry| entry.url.clone()),
+                });
+            }
+        }
+
+        Ok(ImportPreview {
+            import_type: "bitwarden-json".to_owned(),
+            candidates,
+            duplicates,
+            warnings,
+        })
+    }
+
+    #[napi]
+    pub fn import_bitwarden_json_apply(
+        &mut self,
+        input_path: String,
+        decisions: Vec<ImportDuplicateDecision>,
+    ) -> Result<ImportResult> {
+        let now = unix_seconds_now();
+        let decision_map = parse_duplicate_decisions(decisions)?;
+
+        let raw = std::fs::read(&input_path).map_err(|error| error_to_napi(error.to_string()))?;
+        let export: BitwardenExport =
+            serde_json::from_slice(&raw).map_err(|error| error_to_napi(error.to_string()))?;
+
+        let mut warnings = Vec::new();
+        let mut login_index = build_login_duplicate_index(&self.payload);
+        let mut imported = 0_u32;
+        let mut skipped = 0_u32;
+        let mut overwritten = 0_u32;
+
+        for (index, item) in export.items.into_iter().enumerate() {
+            let item_number = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            let title = item.name.trim().to_owned();
+            if title.is_empty() {
+                skipped = skipped.saturating_add(1);
+                warnings.push(format!(
+                    "item {item_number} skipped: missing required `name` field"
+                ));
+                continue;
+            }
+
+            match item.r#type {
+                1 => {
+                    let login = if let Some(login) = item.login {
+                        login
+                    } else {
+                        skipped = skipped.saturating_add(1);
+                        warnings.push(format!(
+                            "item {item_number} skipped: type=1 but missing `login` object"
+                        ));
+                        continue;
+                    };
+
+                    let username = normalize_optional_cell(login.username.as_deref());
+                    let password_field = normalize_optional_cell(login.password.as_deref());
+                    let primary_url = login.uris.as_ref().and_then(|uris| {
+                        uris.iter()
+                            .find_map(|entry| normalize_optional_cell(entry.uri.as_deref()))
+                    });
+                    let notes = normalize_optional_cell(item.notes.as_deref());
+                    let urls = primary_url
+                        .clone()
+                        .map(|value| {
+                            vec![UrlEntry {
+                                url: value,
+                                match_type: UrlMatchType::Exact,
+                            }]
+                        })
+                        .unwrap_or_default();
+
+                    let totp = if let Some(raw_totp) =
+                        normalize_optional_cell(login.totp.as_deref())
+                    {
+                        if raw_totp.starts_with("otpauth://") {
+                            match parse_otpauth_uri(&raw_totp) {
+                                Ok(config) => Some(config),
+                                Err(error) => {
+                                    warnings.push(format!(
+                                            "item {item_number} ignored invalid `login.totp` URI ({error})"
+                                        ));
+                                    None
+                                }
+                            }
+                        } else {
+                            match decode_base32_secret(&raw_totp) {
+                                Ok(seed) => Some(TotpConfig {
+                                    seed,
+                                    issuer: None,
+                                    algorithm: TotpAlgorithm::SHA1,
+                                    digits: 6,
+                                    period: 30,
+                                }),
+                                Err(error) => {
+                                    warnings.push(format!(
+                                            "item {item_number} ignored invalid `login.totp` secret ({error})"
+                                        ));
+                                    None
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    let key =
+                        login_duplicate_key(&title, username.as_deref(), primary_url.as_deref());
+                    if let Some(existing_id) = login_index.get(&key).cloned() {
+                        let action = decision_map
+                            .get(&item_number)
+                            .copied()
+                            .unwrap_or(DuplicateAction::Skip);
+                        match action {
+                            DuplicateAction::Skip => {
+                                skipped = skipped.saturating_add(1);
+                                continue;
+                            }
+                            DuplicateAction::Overwrite => {
+                                if let Some(VaultItem::Login(existing)) = self
+                                    .payload
+                                    .items
+                                    .iter_mut()
+                                    .find(|item| item.id() == existing_id)
+                                {
+                                    existing.title = title.clone();
+                                    existing.urls = urls;
+                                    existing.username = username;
+                                    existing.password = password_field;
+                                    existing.totp = totp;
+                                    existing.notes = notes;
+                                    existing.tags = Vec::new();
+                                    existing.favorite = false;
+                                    existing.updated_at = now;
+                                    overwritten = overwritten.saturating_add(1);
+                                    continue;
+                                }
+                            }
+                            DuplicateAction::KeepBoth => {}
+                        }
+                    }
+
+                    let item = VaultItem::Login(LoginItem {
+                        id: Uuid::new_v4().to_string(),
+                        title,
+                        urls,
+                        username,
+                        password: password_field,
+                        totp,
+                        notes,
+                        tags: Vec::new(),
+                        favorite: false,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                    let item_id = item.id().to_owned();
+                    self.payload
+                        .add_item(item, now)
+                        .map_err(|error| error_to_napi(error.to_string()))?;
+                    login_index.insert(key, item_id);
+                    imported = imported.saturating_add(1);
+                }
+                2 => {
+                    let item = VaultItem::Note(NoteItem {
+                        id: Uuid::new_v4().to_string(),
+                        title,
+                        body: item.notes.unwrap_or_default(),
+                        tags: Vec::new(),
+                        favorite: false,
+                        created_at: now,
+                        updated_at: now,
+                    });
+                    self.payload
+                        .add_item(item, now)
+                        .map_err(|error| error_to_napi(error.to_string()))?;
+                    imported = imported.saturating_add(1);
+                }
+                other => {
+                    skipped = skipped.saturating_add(1);
+                    warnings.push(format!(
+                        "item {item_number} skipped: unsupported Bitwarden item type `{other}`"
+                    ));
+                }
+            }
+        }
+
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+
+        Ok(ImportResult {
+            imported,
+            skipped,
+            overwritten,
+            warnings,
+        })
+    }
+
+    #[napi]
+    pub fn export_csv(&self, output_path: String, include_secrets: bool) -> Result<u32> {
+        ensure_output_parent(output_path.as_str())?;
+        let mut writer = csv::Writer::from_path(&output_path)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        writer
+            .write_record([
+                "type",
+                "title",
+                "username",
+                "password",
+                "url",
+                "notes",
+                "tags",
+                "totp_uri",
+                "created_at",
+                "updated_at",
+            ])
+            .map_err(|error| error_to_napi(error.to_string()))?;
+
+        for item in &self.payload.items {
+            writer
+                .write_record(export_item_csv_row(item, include_secrets))
+                .map_err(|error| error_to_napi(error.to_string()))?;
+        }
+        writer
+            .flush()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(u32::try_from(self.payload.items.len()).unwrap_or(u32::MAX))
+    }
+
+    #[napi]
+    pub fn export_json(&self, output_path: String, include_secrets: bool) -> Result<u32> {
+        ensure_output_parent(output_path.as_str())?;
+        let export = json!({
+            "exported_at": unix_seconds_now(),
+            "redacted": !include_secrets,
+            "item_count": self.payload.items.len(),
+            "items": self.payload.items.iter().map(|item| export_item_json(item, include_secrets)).collect::<Vec<_>>()
+        });
+        let encoded =
+            serde_json::to_vec_pretty(&export).map_err(|error| error_to_napi(error.to_string()))?;
+        std::fs::write(&output_path, encoded).map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(u32::try_from(self.payload.items.len()).unwrap_or(u32::MAX))
+    }
+
+    #[napi]
+    pub fn export_encrypted(
+        &self,
+        output_path: String,
+        export_password: String,
+        redacted: bool,
+    ) -> Result<u32> {
+        if output_path == self.path {
+            return Err(error_to_napi(
+                "encrypted export output must differ from vault path".to_owned(),
+            ));
+        }
+        let password = export_password.trim();
+        if password.is_empty() {
+            return Err(error_to_napi("export password cannot be empty".to_owned()));
+        }
+        ensure_output_parent(output_path.as_str())?;
+
+        let mut export_payload = if redacted {
+            redact_payload(self.payload.clone())
+        } else {
+            self.payload.clone()
+        };
+        export_payload.app.name = "npw-export".to_owned();
+        export_payload.settings.insert(
+            "export_meta.exported_at".to_owned(),
+            unix_seconds_now().to_string(),
+        );
+        export_payload
+            .settings
+            .insert("export_meta.redacted".to_owned(), redacted.to_string());
+        let payload_bytes = export_payload
+            .to_cbor()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+
+        let encrypted_export = create_vault_file(&CreateVaultInput {
+            master_password: password,
+            payload_plaintext: &payload_bytes,
+            item_count: export_payload.item_count(),
+            vault_label: Some("npw-export"),
+            kdf_params: self.unlocked.header.kdf_params,
+        })
+        .map_err(|error| error_to_napi(error.to_string()))?;
+        write_vault(std::path::Path::new(&output_path), &encrypted_export, 10)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+
+        Ok(u32::try_from(export_payload.items.len()).unwrap_or(u32::MAX))
+    }
+
+    #[napi]
     pub fn login_generate_and_replace_password(&mut self, id: String) -> Result<String> {
         let now = unix_seconds_now();
         let index = self
@@ -985,6 +1646,275 @@ fn url_match_type_name(value: UrlMatchType) -> &'static str {
         UrlMatchType::Domain => "domain",
         UrlMatchType::Subdomain => "subdomain",
     }
+}
+
+#[derive(Clone, Copy)]
+enum DuplicateAction {
+    Skip,
+    Overwrite,
+    KeepBoth,
+}
+
+fn parse_duplicate_decisions(
+    decisions: Vec<ImportDuplicateDecision>,
+) -> Result<std::collections::HashMap<u32, DuplicateAction>> {
+    let mut map = std::collections::HashMap::new();
+    for decision in decisions {
+        let action = match decision.action.trim().to_ascii_lowercase().as_str() {
+            "skip" => DuplicateAction::Skip,
+            "overwrite" => DuplicateAction::Overwrite,
+            "keep_both" | "keep-both" | "keepboth" => DuplicateAction::KeepBoth,
+            other => {
+                return Err(error_to_napi(format!(
+                    "invalid duplicate action `{other}` (expected skip|overwrite|keep_both)"
+                )));
+            }
+        };
+        map.insert(decision.source_index, action);
+    }
+    Ok(map)
+}
+
+fn ensure_output_parent(path: &str) -> Result<()> {
+    let output_path = std::path::Path::new(path);
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error_to_napi(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn csv_cell<'a>(
+    headers: &csv::StringRecord,
+    row: &'a csv::StringRecord,
+    name: &str,
+) -> Option<&'a str> {
+    headers
+        .iter()
+        .position(|header| header == name)
+        .and_then(|index| row.get(index))
+}
+
+fn normalize_optional_cell(value: Option<&str>) -> Option<String> {
+    let trimmed = value.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn parse_csv_tags(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn build_login_duplicate_index(
+    payload: &VaultPayload,
+) -> std::collections::HashMap<String, String> {
+    let mut index = std::collections::HashMap::new();
+    for item in &payload.items {
+        if let VaultItem::Login(login) = item {
+            let key = login_duplicate_key(
+                &login.title,
+                login.username.as_deref(),
+                login.urls.first().map(|entry| entry.url.as_str()),
+            );
+            index.insert(key, login.id.clone());
+        }
+    }
+    index
+}
+
+fn login_duplicate_key(title: &str, username: Option<&str>, primary_url: Option<&str>) -> String {
+    format!(
+        "{}|{}|{}",
+        title.trim().to_ascii_lowercase(),
+        username.unwrap_or_default().trim().to_ascii_lowercase(),
+        primary_url.unwrap_or_default().trim().to_ascii_lowercase()
+    )
+}
+
+fn export_item_csv_row(item: &VaultItem, include_secrets: bool) -> [String; 10] {
+    match item {
+        VaultItem::Login(login) => [
+            "login".to_owned(),
+            login.title.clone(),
+            login.username.clone().unwrap_or_default(),
+            if include_secrets {
+                login.password.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            login
+                .urls
+                .first()
+                .map(|entry| entry.url.clone())
+                .unwrap_or_default(),
+            if include_secrets {
+                login.notes.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            login.tags.join(";"),
+            if include_secrets {
+                login
+                    .totp
+                    .as_ref()
+                    .map(|totp| {
+                        login_totp_uri(login.title.as_str(), login.username.as_deref(), totp)
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            },
+            login.created_at.to_string(),
+            login.updated_at.to_string(),
+        ],
+        VaultItem::Note(note) => [
+            "note".to_owned(),
+            note.title.clone(),
+            String::new(),
+            String::new(),
+            String::new(),
+            if include_secrets {
+                note.body.clone()
+            } else {
+                String::new()
+            },
+            note.tags.join(";"),
+            String::new(),
+            note.created_at.to_string(),
+            note.updated_at.to_string(),
+        ],
+        VaultItem::PasskeyRef(passkey) => [
+            "passkey_ref".to_owned(),
+            passkey.title.clone(),
+            passkey.user_display_name.clone().unwrap_or_default(),
+            String::new(),
+            passkey.rp_id.clone(),
+            if include_secrets {
+                passkey.notes.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+            passkey.tags.join(";"),
+            String::new(),
+            passkey.created_at.to_string(),
+            passkey.updated_at.to_string(),
+        ],
+    }
+}
+
+fn export_item_json(item: &VaultItem, include_secrets: bool) -> serde_json::Value {
+    match item {
+        VaultItem::Login(login) => {
+            let mut value = json!({
+                "type": "login",
+                "id": login.id,
+                "title": login.title,
+                "username": login.username,
+                "urls": login.urls,
+                "tags": login.tags,
+                "favorite": login.favorite,
+                "created_at": login.created_at,
+                "updated_at": login.updated_at
+            });
+            if include_secrets {
+                value["password"] = json!(login.password);
+                value["notes"] = json!(login.notes);
+                value["totp_uri"] = json!(login.totp.as_ref().map(|totp| {
+                    login_totp_uri(login.title.as_str(), login.username.as_deref(), totp)
+                }));
+            }
+            value
+        }
+        VaultItem::Note(note) => {
+            let mut value = json!({
+                "type": "note",
+                "id": note.id,
+                "title": note.title,
+                "tags": note.tags,
+                "favorite": note.favorite,
+                "created_at": note.created_at,
+                "updated_at": note.updated_at
+            });
+            if include_secrets {
+                value["body"] = json!(note.body);
+            }
+            value
+        }
+        VaultItem::PasskeyRef(passkey) => {
+            let mut value = json!({
+                "type": "passkey_ref",
+                "id": passkey.id,
+                "title": passkey.title,
+                "rp_id": passkey.rp_id,
+                "rp_name": passkey.rp_name,
+                "user_display_name": passkey.user_display_name,
+                "tags": passkey.tags,
+                "favorite": passkey.favorite,
+                "created_at": passkey.created_at,
+                "updated_at": passkey.updated_at
+            });
+            if include_secrets {
+                value["notes"] = json!(passkey.notes);
+                value["credential_id"] = json!(passkey.credential_id);
+            }
+            value
+        }
+    }
+}
+
+fn redact_payload(mut payload: VaultPayload) -> VaultPayload {
+    for item in &mut payload.items {
+        match item {
+            VaultItem::Login(login) => {
+                login.password = None;
+                login.notes = None;
+                login.totp = None;
+            }
+            VaultItem::Note(note) => {
+                note.body.clear();
+            }
+            VaultItem::PasskeyRef(passkey) => {
+                passkey.notes = None;
+            }
+        }
+    }
+    payload.rebuild_search_index();
+    payload
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenExport {
+    #[serde(default)]
+    items: Vec<BitwardenItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenItem {
+    #[serde(default)]
+    r#type: u8,
+    #[serde(default)]
+    name: String,
+    notes: Option<String>,
+    login: Option<BitwardenLogin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenLogin {
+    username: Option<String>,
+    password: Option<String>,
+    totp: Option<String>,
+    uris: Option<Vec<BitwardenLoginUri>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenLoginUri {
+    uri: Option<String>,
 }
 
 fn login_totp_uri(title: &str, username: Option<&str>, config: &npw_core::TotpConfig) -> String {
