@@ -41,6 +41,16 @@ type LoginDetail = {
   tags: string[]
 }
 
+type NoteDetail = {
+  id: string
+  title: string
+  body: string
+  favorite: boolean
+  createdAt: number
+  updatedAt: number
+  tags: string[]
+}
+
 type TotpCode = {
   code: string
   period: number
@@ -63,6 +73,8 @@ contextBridge.exposeInMainWorld('npw', {
   vaultLock: (): Promise<boolean> => ipcRenderer.invoke('vault.lock'),
   itemList: (payload: { query?: string | null }): Promise<ItemSummary[]> => ipcRenderer.invoke('item.list', payload),
   loginGet: (payload: { id: string }): Promise<LoginDetail> => ipcRenderer.invoke('item.login.get', payload),
+  noteGet: (payload: { id: string }): Promise<NoteDetail> => ipcRenderer.invoke('item.note.get', payload),
+  noteAdd: (payload: { title: string; body: string }): Promise<string> => ipcRenderer.invoke('item.note.add', payload),
   loginCopyUsername: (payload: { id: string }): Promise<boolean> =>
     ipcRenderer.invoke('item.login.copy-username', payload),
   loginCopyPassword: (payload: { id: string }): Promise<boolean> =>

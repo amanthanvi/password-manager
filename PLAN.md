@@ -119,3 +119,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop holds an exclusive vault lock for the unlock session (prevents concurrent CLI writes; acceptance Scenario 5).
 - [x] M9 slice complete: desktop renders login TOTP codes with countdown + copy action (auto-clears).
 - [x] M9 slice complete: desktop vault picker lists recent vaults and uses OS file dialogs for open/create.
+- [x] M9 slice complete: desktop can add and view secure notes, persisting changes via the native session + atomic vault writes.

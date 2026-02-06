@@ -40,6 +40,16 @@ declare global {
     tags: string[]
   }
 
+  interface NoteDetail {
+    id: string
+    title: string
+    body: string
+    favorite: boolean
+    createdAt: number
+    updatedAt: number
+    tags: string[]
+  }
+
   interface TotpCode {
     code: string
     period: number
@@ -60,6 +70,8 @@ declare global {
       vaultLock: () => Promise<boolean>
       itemList: (payload: { query?: string | null }) => Promise<ItemSummary[]>
       loginGet: (payload: { id: string }) => Promise<LoginDetail>
+      noteGet: (payload: { id: string }) => Promise<NoteDetail>
+      noteAdd: (payload: { title: string; body: string }) => Promise<string>
       loginCopyUsername: (payload: { id: string }) => Promise<boolean>
       loginCopyPassword: (payload: { id: string }) => Promise<boolean>
       loginTotpGet: (payload: { id: string }) => Promise<TotpCode>

@@ -53,6 +53,16 @@ type LoginDetail = {
   tags: string[]
 }
 
+type NoteDetail = {
+  id: string
+  title: string
+  body: string
+  favorite: boolean
+  createdAt: number
+  updatedAt: number
+  tags: string[]
+}
+
 type TotpCode = {
   code: string
   period: number
@@ -66,6 +76,8 @@ type VaultSession = {
   getLogin: (id: string) => LoginDetail
   getLoginPassword: (id: string) => string
   getLoginTotp: (id: string) => TotpCode
+  getNote: (id: string) => NoteDetail
+  addNote: (title: string, body: string) => string
 }
 
 type AddonApi = {
@@ -201,6 +213,28 @@ function registerIpcHandlers(api: AddonApi) {
     }
     const safeId = validateText(payload.id, 'id', 128)
     return session.getLogin(safeId)
+  })
+
+  ipcMain.handle('item.note.get', (_event, payload: { id: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeId = validateText(payload.id, 'id', 128)
+    return session.getNote(safeId)
+  })
+
+  ipcMain.handle('item.note.add', (_event, payload: { title: string; body: string }) => {
+    if (!session) {
+      throw new Error('vault is locked')
+    }
+    const safeTitle = validateText(payload.title, 'title', 256)
+    if (typeof payload.body !== 'string') {
+      throw new Error('body must be a string')
+    }
+    if (payload.body.length > 1_000_000) {
+      throw new Error('body is too long')
+    }
+    return session.addNote(safeTitle, payload.body)
   })
 
   ipcMain.handle('item.login.copy-username', (_event, payload: { id: string }) => {

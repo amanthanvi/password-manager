@@ -12,9 +12,12 @@
   let items = []
   let selectedItem = null
   let loginDetail = null
+  let noteDetail = null
   let totp = null
   let totpInterval = null
   let recents = []
+  let newNoteTitle = ''
+  let newNoteBody = ''
 
   onMount(async () => {
     try {
@@ -71,6 +74,7 @@
       items = []
       selectedItem = null
       loginDetail = null
+      noteDetail = null
       totp = null
       clearTotpInterval()
       lastResult = 'Vault locked'
@@ -133,6 +137,7 @@
       if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
         selectedItem = null
         loginDetail = null
+        noteDetail = null
         totp = null
         clearTotpInterval()
       }
@@ -142,41 +147,65 @@
     }
   }
 
+  const addNote = async () => {
+    try {
+      const id = await window.npw.noteAdd({ title: newNoteTitle, body: newNoteBody })
+      newNoteTitle = ''
+      newNoteBody = ''
+      await refreshItems()
+      const created = items.find((item) => item.id === id)
+      if (created) {
+        await selectItem(created)
+      }
+      lastResult = `Created note ${id}`
+    } catch (error) {
+      lastResult = formatError(error)
+    }
+  }
+
   const selectItem = async (item) => {
     selectedItem = item
     loginDetail = null
+    noteDetail = null
     totp = null
     clearTotpInterval()
     if (!item) {
       return
     }
-    if (item.itemType !== 'login') {
-      lastResult = `Item type ${item.itemType} detail view not implemented yet`
-      return
-    }
     const itemId = item.id
     try {
-      loginDetail = await window.npw.loginGet({ id: itemId })
-      lastResult = `Loaded item ${itemId}`
-      if (loginDetail.hasTotp) {
-        await refreshTotp(itemId)
-        totpInterval = setInterval(async () => {
-          if (!selectedItem || selectedItem.id !== itemId) {
-            clearTotpInterval()
-            return
-          }
-          try {
-            if (totp && totp.remaining > 1) {
-              totp = { ...totp, remaining: totp.remaining - 1 }
+      if (item.itemType === 'login') {
+        loginDetail = await window.npw.loginGet({ id: itemId })
+        lastResult = `Loaded item ${itemId}`
+        if (loginDetail.hasTotp) {
+          await refreshTotp(itemId)
+          totpInterval = setInterval(async () => {
+            if (!selectedItem || selectedItem.id !== itemId) {
+              clearTotpInterval()
               return
             }
-            await refreshTotp(itemId)
-          } catch {
-            totp = null
-            clearTotpInterval()
-          }
-        }, 1000)
+            try {
+              if (totp && totp.remaining > 1) {
+                totp = { ...totp, remaining: totp.remaining - 1 }
+                return
+              }
+              await refreshTotp(itemId)
+            } catch {
+              totp = null
+              clearTotpInterval()
+            }
+          }, 1000)
+        }
+        return
       }
+
+      if (item.itemType === 'note') {
+        noteDetail = await window.npw.noteGet({ id: itemId })
+        lastResult = `Loaded item ${itemId}`
+        return
+      }
+
+      lastResult = `Item type ${item.itemType} detail view not implemented yet`
     } catch (error) {
       lastResult = formatError(error)
     }
@@ -293,6 +322,23 @@
     <input bind:value={query} on:input={refreshItems} disabled={!status} />
   </label>
 
+  {#if status}
+    <section class="add-note">
+      <h2>Add Note</h2>
+      <label>
+        Title
+        <input bind:value={newNoteTitle} />
+      </label>
+      <label>
+        Body
+        <textarea bind:value={newNoteBody} rows="4"></textarea>
+      </label>
+      <div class="actions">
+        <button on:click={addNote} disabled={newNoteTitle.trim().length === 0}>Save Note</button>
+      </div>
+    </section>
+  {/if}
+
   <div class="actions">
     <button on:click={refreshItems} disabled={!status}>Refresh Items</button>
   </div>
@@ -396,6 +442,23 @@
       {/if}
     </section>
   {/if}
+
+  {#if status && selectedItem && noteDetail}
+    <section class="detail">
+      <h2>Note</h2>
+      <p class="muted">{noteDetail.id}</p>
+
+      <div class="field">
+        <div class="label">Title</div>
+        <div>{noteDetail.title}</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Body</div>
+        <pre class="note">{noteDetail.body}</pre>
+      </div>
+    </section>
+  {/if}
 </main>
 
 <style>
@@ -411,11 +474,16 @@
     font-weight: 600;
   }
 
-  input {
+  input,
+  textarea {
     padding: 0.55rem 0.6rem;
     border: 1px solid #7a919f;
     border-radius: 0.35rem;
     font: inherit;
+  }
+
+  textarea {
+    resize: vertical;
   }
 
   .actions {
@@ -434,6 +502,19 @@
   }
 
   .picker h2 {
+    margin: 0;
+  }
+
+  .add-note {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #93a8b5;
+    border-radius: 0.75rem;
+    background: #f4fbff;
+  }
+
+  .add-note h2 {
     margin: 0;
   }
 

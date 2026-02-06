@@ -3,11 +3,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use npw_core::{
-    CreateVaultInput, KdfParams, VaultItem, VaultPayload, assess_master_password,
-    create_vault_file, generate_totp, parse_vault_header, unlock_vault_file,
-    unlock_vault_file_with_kek,
+    CreateVaultInput, KdfParams, NoteItem, VaultItem, VaultPayload, assess_master_password,
+    create_vault_file, generate_totp, parse_vault_header, reencrypt_vault_file_with_kek,
+    unlock_vault_file, unlock_vault_file_with_kek,
 };
-use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault};
+use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault, write_vault_with_lock};
+use uuid::Uuid;
 use zeroize::Zeroize;
 
 #[napi(object)]
@@ -111,6 +112,17 @@ pub struct LoginDetail {
 }
 
 #[napi(object)]
+pub struct NoteDetail {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub favorite: bool,
+    pub created_at: u32,
+    pub updated_at: u32,
+    pub tags: Vec<String>,
+}
+
+#[napi(object)]
 pub struct TotpCode {
     pub code: String,
     pub period: u16,
@@ -196,6 +208,27 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn get_note(&self, id: String) -> Result<NoteDetail> {
+        let item = self
+            .payload
+            .get_item(&id)
+            .ok_or_else(|| error_to_napi("item not found".to_owned()))?;
+        let VaultItem::Note(note) = item else {
+            return Err(error_to_napi("item is not a note".to_owned()));
+        };
+
+        Ok(NoteDetail {
+            id: note.id.clone(),
+            title: note.title.clone(),
+            body: note.body.clone(),
+            favorite: note.favorite,
+            created_at: u32::try_from(note.created_at).unwrap_or(u32::MAX),
+            updated_at: u32::try_from(note.updated_at).unwrap_or(u32::MAX),
+            tags: note.tags.clone(),
+        })
+    }
+
+    #[napi]
     pub fn get_login_totp(&self, id: String) -> Result<TotpCode> {
         let item = self
             .payload
@@ -223,11 +256,55 @@ impl VaultSession {
     }
 
     #[napi]
+    pub fn add_note(&mut self, title: String, body: String) -> Result<String> {
+        let now = unix_seconds_now();
+        let id = Uuid::new_v4().to_string();
+        let note = NoteItem {
+            id: id.clone(),
+            title,
+            body,
+            tags: Vec::new(),
+            favorite: false,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.payload
+            .add_item(VaultItem::Note(note), now)
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        self.persist()
+            .map_err(|error| error_to_napi(error.to_string()))?;
+        Ok(id)
+    }
+
+    #[napi]
     pub fn lock(&mut self) {
         self.payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now());
         self.unlocked.payload_plaintext.zeroize();
         self.unlocked.payload_plaintext.clear();
         self.lock = None;
+    }
+}
+
+impl VaultSession {
+    fn persist(&mut self) -> std::result::Result<(), String> {
+        let lock = self
+            .lock
+            .as_ref()
+            .ok_or_else(|| "vault session is locked".to_owned())?;
+        let payload_plaintext = self.payload.to_cbor().map_err(|error| error.to_string())?;
+        let rewritten = reencrypt_vault_file_with_kek(
+            self.unlocked.kek(),
+            &payload_plaintext,
+            self.payload.item_count(),
+            &self.unlocked.header,
+            &self.unlocked.envelope,
+        )
+        .map_err(|error| error.to_string())?;
+
+        write_vault_with_lock(lock, &rewritten, 10).map_err(|error| error.to_string())?;
+        self.unlocked.header.item_count = self.payload.item_count();
+        Ok(())
     }
 }
 
