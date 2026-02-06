@@ -17,6 +17,7 @@ const run = (command, args, options = {}) =>
     const child = spawn(command, args, {
       cwd,
       stdio: 'inherit',
+      shell: process.platform === 'win32',
       env: options.env ?? process.env
     })
     child.on('error', reject)
@@ -33,6 +34,7 @@ const spawnLongRunning = (command, args, options = {}) => {
   const child = spawn(command, args, {
     cwd,
     stdio: 'inherit',
+    shell: process.platform === 'win32',
     env: options.env ?? process.env
   })
   return child
