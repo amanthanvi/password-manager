@@ -16,8 +16,6 @@ asarUnpack:
 
 npmRebuild: false
 
-publish: never
-
 mac:
   target:
     - dmg

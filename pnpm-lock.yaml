@@ -10,9 +10,6 @@ importers:
 
   apps/desktop:
     dependencies:
-      electron:
-        specifier: ^38.7.1
-        version: 38.8.0
       jsqr:
         specifier: 1.4.0
         version: 1.4.0
@@ -29,6 +26,9 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.11
+      electron:
+        specifier: ^38.7.1
+        version: 38.8.0
       electron-builder:
         specifier: ^26.7.0
         version: 26.7.0(electron-builder-squirrel-windows@26.7.0)
