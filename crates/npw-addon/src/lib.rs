@@ -6,7 +6,7 @@ use npw_core::{
     CreateVaultInput, KdfParams, VaultItem, VaultPayload, assess_master_password,
     create_vault_file, parse_vault_header, unlock_vault_file, unlock_vault_file_with_kek,
 };
-use npw_storage::{read_vault, write_vault};
+use npw_storage::{VaultLock, acquire_vault_lock, read_vault, write_vault};
 use zeroize::Zeroize;
 
 #[napi(object)]
@@ -112,6 +112,7 @@ pub struct LoginDetail {
 #[napi]
 pub struct VaultSession {
     path: String,
+    lock: Option<VaultLock>,
     unlocked: npw_core::UnlockedVaultWithKek,
     payload: VaultPayload,
 }
@@ -191,12 +192,14 @@ impl VaultSession {
         self.payload = VaultPayload::new("npw", env!("CARGO_PKG_VERSION"), unix_seconds_now());
         self.unlocked.payload_plaintext.zeroize();
         self.unlocked.payload_plaintext.clear();
+        self.lock = None;
     }
 }
 
 #[napi]
 pub fn vault_unlock(path: String, master_password: String) -> Result<VaultSession> {
     let path_ref = std::path::Path::new(&path);
+    let lock = acquire_vault_lock(path_ref).map_err(|error| error_to_napi(error.to_string()))?;
     let bytes = read_vault(path_ref).map_err(|error| error_to_napi(error.to_string()))?;
     let mut unlocked = unlock_vault_file_with_kek(&bytes, &master_password)
         .map_err(|error| error_to_napi(error.to_string()))?;
@@ -207,6 +210,7 @@ pub fn vault_unlock(path: String, master_password: String) -> Result<VaultSessio
 
     Ok(VaultSession {
         path,
+        lock: Some(lock),
         unlocked,
         payload,
     })

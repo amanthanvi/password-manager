@@ -3408,7 +3408,7 @@ fn map_storage_error(error: StorageError) -> CliError {
         StorageError::Locked => CliError {
             code: CliExitCode::VaultFileLocked,
             kind: "vault_file_locked",
-            message: "vault file is locked by another process".to_owned(),
+            message: "vault file locked by another process".to_owned(),
         },
         StorageError::Io(error) => map_io_error(error),
     }
@@ -3842,9 +3842,11 @@ fn diceware_words() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload, scrub_log_value,
+        decode_encrypted_totp_qr_payload, encode_encrypted_totp_qr_payload, map_storage_error,
+        scrub_log_value,
     };
     use npw_core::KdfParams;
+    use npw_storage::StorageError;
     use serde_json::json;
 
     #[test]
@@ -3885,5 +3887,13 @@ mod tests {
         assert!(!encoded.contains(secret));
         assert!(encoded.contains("[REDACTED]"));
         assert!(encoded.contains("ok"));
+    }
+
+    #[test]
+    fn storage_locked_maps_to_expected_cli_error() {
+        let error = map_storage_error(StorageError::Locked);
+        let super::CliError { code, message, .. } = error;
+        assert!(matches!(code, super::CliExitCode::VaultFileLocked));
+        assert_eq!(message, "vault file locked by another process");
     }
 }

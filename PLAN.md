@@ -116,3 +116,4 @@ These become authoritative once scaffolded in Step 1:
 - [x] M5 slice complete: zxcvbn master password policy (score >= 3) enforced (CLI + desktop vault create).
 - [x] M8 slice complete: derived-key vault unlock (KEK) support + addon `VaultSession` and desktop unlock + item list UI (no secrets in renderer).
 - [x] M9 slice complete: desktop login item detail view + copy username/password actions (clipboard auto-clear).
+- [x] M9 slice complete: desktop holds an exclusive vault lock for the unlock session (prevents concurrent CLI writes; acceptance Scenario 5).

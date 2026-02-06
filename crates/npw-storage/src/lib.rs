@@ -24,12 +24,34 @@ pub struct BackupEntry {
     pub timestamp: u64,
 }
 
+#[derive(Debug)]
+pub struct VaultLock {
+    vault_path: PathBuf,
+    _lock_file: File,
+}
+
+impl VaultLock {
+    pub fn path(&self) -> &Path {
+        &self.vault_path
+    }
+}
+
 pub fn read_vault(path: &Path) -> Result<Vec<u8>, StorageError> {
     Ok(fs::read(path)?)
 }
 
 pub fn write_vault(path: &Path, bytes: &[u8], max_retained: usize) -> Result<(), StorageError> {
-    let _lock = acquire_lock(path)?;
+    let lock = acquire_vault_lock(path)?;
+    write_vault_with_lock(&lock, bytes, max_retained)?;
+    Ok(())
+}
+
+pub fn write_vault_with_lock(
+    lock: &VaultLock,
+    bytes: &[u8],
+    max_retained: usize,
+) -> Result<(), StorageError> {
+    let path = lock.path();
 
     if path.exists() {
         create_backup(path, max_retained)?;
@@ -67,14 +89,22 @@ pub fn recover_from_backup(
     vault_path: &Path,
     backup_path: &Path,
 ) -> Result<Option<PathBuf>, StorageError> {
-    let _lock = acquire_lock(vault_path)?;
+    let lock = acquire_vault_lock(vault_path)?;
+    recover_from_backup_with_lock(&lock, backup_path)
+}
+
+pub fn recover_from_backup_with_lock(
+    lock: &VaultLock,
+    backup_path: &Path,
+) -> Result<Option<PathBuf>, StorageError> {
+    let vault_path = lock.path();
     let backup_bytes = fs::read(backup_path)?;
     let corrupt_path = preserve_corrupt_vault(vault_path)?;
     write_vault_atomic(vault_path, &backup_bytes)?;
     Ok(corrupt_path)
 }
 
-fn acquire_lock(path: &Path) -> Result<File, StorageError> {
+pub fn acquire_vault_lock(path: &Path) -> Result<VaultLock, StorageError> {
     let lock_path = lock_file_path(path);
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)?;
@@ -86,7 +116,10 @@ fn acquire_lock(path: &Path) -> Result<File, StorageError> {
         .truncate(false)
         .open(lock_path)?;
     match lock_file.try_lock_exclusive() {
-        Ok(()) => Ok(lock_file),
+        Ok(()) => Ok(VaultLock {
+            vault_path: path.to_path_buf(),
+            _lock_file: lock_file,
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(StorageError::Locked),
         Err(error) => Err(StorageError::Io(error)),
     }
@@ -277,8 +310,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        StorageError, backup_directory, compact_backups, list_backups, lock_file_path,
-        parse_backup_timestamp, read_vault, recover_from_backup, write_vault,
+        StorageError, acquire_vault_lock, backup_directory, compact_backups, list_backups,
+        lock_file_path, parse_backup_timestamp, read_vault, recover_from_backup, write_vault,
+        write_vault_with_lock,
     };
 
     fn temp_path(file_name: &str) -> PathBuf {
@@ -319,6 +353,16 @@ mod tests {
 
         assert!(matches!(result, Err(StorageError::Locked)));
         let _ = fs::remove_file(lock_path);
+    }
+
+    #[test]
+    fn write_vault_with_lock_succeeds_when_lock_is_held() {
+        let path = temp_path("write-with-lock.npw");
+        let lock = acquire_vault_lock(&path).expect("acquire vault lock");
+        write_vault_with_lock(&lock, b"payload", 10).expect("write with lock should succeed");
+        let loaded = read_vault(&path).expect("read should succeed");
+        assert_eq!(loaded, b"payload");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
