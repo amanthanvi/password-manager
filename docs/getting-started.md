@@ -9,7 +9,7 @@
    - `cargo run -q -p npw-cli -- vault status /tmp/personal.npw`
 
 ## Desktop quickstart
-1. Build desktop app assets + native addon:
-   - `pnpm --filter desktop build`
-2. Run desktop renderer dev server:
+1. Run the desktop app in dev mode (starts Electron + Vite and builds the native addon):
    - `pnpm --filter desktop dev`
+2. Optional: run the renderer only (limited: no native dialogs/config/vault access):
+   - `pnpm --filter desktop dev:web`

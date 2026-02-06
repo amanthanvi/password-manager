@@ -11,6 +11,7 @@
   let quickUnlockBusy = false
   let query = ''
   let bridgeStatus = 'initializing'
+  let bridgeAvailable = false
   let lastResult = ''
   let status = null
   let items = []
@@ -211,6 +212,19 @@
   }
 
   onMount(async () => {
+    bridgeAvailable =
+      typeof window !== 'undefined' &&
+      window.npw &&
+      typeof window.npw.coreBanner === 'function' &&
+      typeof window.npw.onVaultLocked === 'function'
+
+    if (!bridgeAvailable) {
+      bridgeStatus = formatStatus(
+        'Desktop bridge unavailable. This UI must be run inside Electron. Run `pnpm --filter desktop dev`.'
+      )
+      return
+    }
+
     try {
       const banner = await window.npw.coreBanner()
       bridgeStatus = formatStatus(banner)
@@ -724,6 +738,14 @@
   }
 
   const pickOpenVault = async () => {
+    if (!bridgeAvailable) {
+      pushToast({
+        kind: 'error',
+        title: 'Desktop bridge unavailable',
+        detail: 'This UI must be run inside Electron. Run `pnpm --filter desktop dev`.'
+      })
+      return
+    }
     try {
       const picked = await window.npw.vaultDialogOpen()
       if (!picked) {
@@ -740,6 +762,14 @@
   }
 
   const pickCreateVault = async () => {
+    if (!bridgeAvailable) {
+      pushToast({
+        kind: 'error',
+        title: 'Desktop bridge unavailable',
+        detail: 'This UI must be run inside Electron. Run `pnpm --filter desktop dev`.'
+      })
+      return
+    }
     try {
       const picked = await window.npw.vaultDialogCreate()
       if (!picked) {
@@ -1705,8 +1735,8 @@
       </ul>
     {/if}
     <div class="actions">
-      <button type="button" on:click={pickCreateVault}>Create New Vault…</button>
-      <button type="button" on:click={pickOpenVault}>Open Existing Vault…</button>
+      <button type="button" on:click={pickCreateVault} disabled={!bridgeAvailable}>Create New Vault…</button>
+      <button type="button" on:click={pickOpenVault} disabled={!bridgeAvailable}>Open Existing Vault…</button>
     </div>
   </section>
 
@@ -1755,10 +1785,12 @@
     {/if}
 
     <div class="actions">
-      <button type="button" on:click={saveSettings} disabled={settingsSaving}>
+      <button type="button" on:click={saveSettings} disabled={settingsSaving || !bridgeAvailable}>
         {settingsSaving ? 'Saving…' : 'Save Settings'}
       </button>
-      <button class="secondary" type="button" on:click={refreshConfig} disabled={settingsSaving}>Reload</button>
+      <button class="secondary" type="button" on:click={refreshConfig} disabled={settingsSaving || !bridgeAvailable}>
+        Reload
+      </button>
     </div>
   </section>
 
@@ -1778,19 +1810,19 @@
   </label>
 
   <div class="actions">
-    <button on:click={createVault}>Create Vault</button>
-    <button on:click={unlockVault}>Unlock Vault</button>
+    <button on:click={createVault} disabled={!bridgeAvailable}>Create Vault</button>
+    <button on:click={unlockVault} disabled={!bridgeAvailable}>Unlock Vault</button>
     {#if !status && quickUnlockForPath.configured}
       <button
         class="secondary"
         type="button"
         on:click={quickUnlockVault}
-        disabled={quickUnlockBusy || !quickUnlockForPath.available || !quickUnlockForPath.enabled}
+        disabled={!bridgeAvailable || quickUnlockBusy || !quickUnlockForPath.available || !quickUnlockForPath.enabled}
       >
         Quick Unlock
       </button>
     {/if}
-    <button on:click={lockVault} disabled={!status}>Lock Vault</button>
+    <button on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
   </div>
 
   {#if !status && quickUnlockForPath.error}

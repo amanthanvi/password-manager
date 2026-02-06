@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-electron.js",
+    "dev:web": "vite",
     "build:addon": "node ../../scripts/build-addon.mjs",
     "build:addon:release": "node ../../scripts/build-addon.mjs --release",
     "build": "pnpm run build:addon && vite build && tsc -p tsconfig.electron.json",
