@@ -131,6 +131,7 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop login password "Generate & Replace" action using the configured generator defaults.
 - [x] M9 slice complete: desktop add/edit supports tags + favorites, multi-URL editing with match types, and passkey reference creation.
 - [x] M9 slice complete: desktop import/export screen with CSV + Bitwarden JSON preview/apply (duplicate resolution) and CSV/JSON/encrypted exports via OS dialogs.
+- [x] M9 slice complete: desktop OS keychain Quick Unlock (opt-in per vault; explicit warning + confirmation; disable deletes keychain entry).
 
 ## 6. Remaining v0.1.0 Blockers (MUST)
 
@@ -138,7 +139,7 @@ These become authoritative once scaffolded in Step 1:
 - [x] GUI: implement TOTP QR import with camera scan and paste fallback (SPEC K10).
 - [x] GUI: implement Import/Export screen (SPEC K1.7) including duplicate resolution UX for CSV/Bitwarden JSON imports (SPEC S1 Scenario 2).
 - [x] GUI: implement full Add/Edit item flows (SPEC K9) including URL match type badges and tag normalization.
-- [ ] Desktop: implement OS keychain Quick Unlock per vault (SPEC L0) with explicit warning/confirmation.
+- [x] Desktop: implement OS keychain Quick Unlock per vault (SPEC L0) with explicit warning/confirmation.
 - [ ] Core: implement mlock/zeroize policy for key material with graceful degradation (SPEC G8).
 - [x] Desktop security: add production CSP with `connect-src 'none'` (SPEC I2) and ensure networking is disabled by default.
 - [x] CLI: enforce config `set` validation bounds (SPEC J6) to match desktop/addon behavior.
