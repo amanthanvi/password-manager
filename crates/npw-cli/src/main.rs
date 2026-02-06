@@ -9,8 +9,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use directories::ProjectDirs;
 use npw_core::{
     CreateVaultInput, ItemTypeFilter, KdfParams, LoginItem, ModelError, NoteItem, PasskeyRefItem,
-    ReencryptVaultInput, UrlEntry, UrlMatchType, VaultError, VaultItem, VaultPayload,
-    create_vault_file, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
+    ReencryptVaultInput, TotpAlgorithm, TotpConfig, TotpError, UrlEntry, UrlMatchType, VaultError,
+    VaultItem, VaultPayload, create_vault_file, decode_base32_secret, generate_totp,
+    parse_otpauth_uri, parse_vault_header, reencrypt_vault_file, unlock_vault_file,
 };
 use npw_storage::{StorageError, read_vault, write_vault};
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,7 @@ enum Command {
         #[command(subcommand)]
         command: ItemCommand,
     },
+    Totp(TotpArgs),
     Search(SearchArgs),
     Config {
         #[command(subcommand)]
@@ -150,6 +152,15 @@ struct ItemIdArgs {
     id: String,
 }
 
+#[derive(Debug, Args)]
+struct TotpArgs {
+    id: String,
+    #[arg(long)]
+    path: Option<PathBuf>,
+    #[arg(long)]
+    at: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ItemTypeArg {
     Login,
@@ -163,6 +174,23 @@ impl ItemTypeArg {
             Self::Login => ItemTypeFilter::Login,
             Self::Note => ItemTypeFilter::Note,
             Self::PasskeyRef => ItemTypeFilter::PasskeyRef,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TotpAlgorithmArg {
+    Sha1,
+    Sha256,
+    Sha512,
+}
+
+impl TotpAlgorithmArg {
+    fn into_core(self) -> TotpAlgorithm {
+        match self {
+            Self::Sha1 => TotpAlgorithm::SHA1,
+            Self::Sha256 => TotpAlgorithm::SHA256,
+            Self::Sha512 => TotpAlgorithm::SHA512,
         }
     }
 }
@@ -189,6 +217,18 @@ struct ItemAddLoginArgs {
     notes: Option<String>,
     #[arg(long = "tag")]
     tags: Vec<String>,
+    #[arg(long)]
+    totp_secret_base32: Option<String>,
+    #[arg(long)]
+    totp_uri: Option<String>,
+    #[arg(long)]
+    totp_issuer: Option<String>,
+    #[arg(long, value_enum)]
+    totp_algorithm: Option<TotpAlgorithmArg>,
+    #[arg(long)]
+    totp_digits: Option<u8>,
+    #[arg(long)]
+    totp_period: Option<u16>,
     #[arg(long, default_value_t = false)]
     favorite: bool,
 }
@@ -414,6 +454,7 @@ fn execute(cli: &Cli) -> Result<CommandOutput, CliError> {
             VaultCommand::Status(args) => handle_vault_status(cli, &config, args),
         },
         Command::Item { command } => handle_item_command(cli, &config, command),
+        Command::Totp(args) => handle_totp(cli, &config, args),
         Command::Search(args) => handle_search(cli, &config, args),
         Command::Config { command } => handle_config(command, &mut config, &config_path),
         Command::Generate(args) => handle_generate(args),
@@ -563,6 +604,8 @@ fn handle_item_add_login(
     let now = unix_seconds_now();
     let (path, password, unlocked, mut payload) =
         load_vault_payload(cli, config, args.path.clone())?;
+    let totp = build_login_totp(args)?;
+    let has_totp = totp.is_some();
     let urls = args
         .urls
         .iter()
@@ -578,7 +621,7 @@ fn handle_item_add_login(
         urls,
         username: args.username.clone(),
         password: args.password.clone(),
-        totp: None,
+        totp,
         notes: args.notes.clone(),
         tags: normalize_tags(&args.tags),
         favorite: args.favorite,
@@ -600,7 +643,8 @@ fn handle_item_add_login(
         payload: json!({
             "id": item_id,
             "path": path,
-            "type": "login"
+            "type": "login",
+            "has_totp": has_totp
         }),
     })
 }
@@ -781,6 +825,44 @@ fn handle_search(
             "query": args.query,
             "count": items.len(),
             "items": items_json
+        }),
+    })
+}
+
+fn handle_totp(cli: &Cli, config: &AppConfig, args: &TotpArgs) -> Result<CommandOutput, CliError> {
+    let (_path, _password, _unlocked, payload) =
+        load_vault_payload(cli, config, args.path.clone())?;
+    let item = payload.get_item(&args.id).ok_or_else(|| CliError {
+        code: CliExitCode::Usage,
+        kind: "item_not_found",
+        message: format!("item not found: {}", args.id),
+    })?;
+    let login = match item {
+        VaultItem::Login(login) => login,
+        _ => {
+            return Err(CliError::usage(
+                "totp can only be generated for login items",
+            ));
+        }
+    };
+    let totp = login
+        .totp
+        .as_ref()
+        .ok_or_else(|| CliError::usage("login item has no TOTP configuration"))?;
+    let at = args.at.unwrap_or_else(unix_seconds_now);
+    let code = generate_totp(totp, at).map_err(map_totp_error)?;
+    let remaining = u64::from(totp.period) - (at % u64::from(totp.period));
+
+    Ok(CommandOutput {
+        message: code.clone(),
+        payload: json!({
+            "id": args.id,
+            "code": code,
+            "at": at,
+            "period": totp.period,
+            "digits": totp.digits,
+            "algorithm": totp_algorithm_name(totp.algorithm),
+            "seconds_remaining": remaining
         }),
     })
 }
@@ -1053,6 +1135,23 @@ fn map_model_error(error: ModelError) -> CliError {
     }
 }
 
+fn map_totp_error(error: TotpError) -> CliError {
+    match error {
+        TotpError::InvalidBase32Secret
+        | TotpError::InvalidOtpAuthUri(_)
+        | TotpError::UnsupportedOtpAuthType => CliError {
+            code: CliExitCode::Usage,
+            kind: "invalid_totp_input",
+            message: error.to_string(),
+        },
+        TotpError::InvalidConfig(_) => CliError {
+            code: CliExitCode::CorruptOrParse,
+            kind: "invalid_totp_config",
+            message: error.to_string(),
+        },
+    }
+}
+
 fn map_vault_error(error: VaultError) -> CliError {
     match error {
         VaultError::AuthFailed | VaultError::KdfFailure => CliError {
@@ -1215,6 +1314,62 @@ fn normalize_tags(raw_tags: &[String]) -> Vec<String> {
         }
     }
     tags
+}
+
+fn build_login_totp(args: &ItemAddLoginArgs) -> Result<Option<TotpConfig>, CliError> {
+    if args.totp_secret_base32.is_some() && args.totp_uri.is_some() {
+        return Err(CliError::usage(
+            "provide either --totp-secret-base32 or --totp-uri, not both",
+        ));
+    }
+
+    if let Some(uri) = &args.totp_uri {
+        if args.totp_issuer.is_some()
+            || args.totp_algorithm.is_some()
+            || args.totp_digits.is_some()
+            || args.totp_period.is_some()
+        {
+            return Err(CliError::usage(
+                "--totp-uri cannot be combined with explicit TOTP field overrides",
+            ));
+        }
+        return parse_otpauth_uri(uri).map(Some).map_err(map_totp_error);
+    }
+
+    if let Some(secret) = &args.totp_secret_base32 {
+        let config = TotpConfig {
+            seed: decode_base32_secret(secret).map_err(map_totp_error)?,
+            issuer: args.totp_issuer.clone(),
+            algorithm: args
+                .totp_algorithm
+                .unwrap_or(TotpAlgorithmArg::Sha1)
+                .into_core(),
+            digits: args.totp_digits.unwrap_or(6),
+            period: args.totp_period.unwrap_or(30),
+        };
+        config.validate().map_err(map_model_error)?;
+        return Ok(Some(config));
+    }
+
+    if args.totp_issuer.is_some()
+        || args.totp_algorithm.is_some()
+        || args.totp_digits.is_some()
+        || args.totp_period.is_some()
+    {
+        return Err(CliError::usage(
+            "TOTP options require --totp-secret-base32 or --totp-uri",
+        ));
+    }
+
+    Ok(None)
+}
+
+fn totp_algorithm_name(algorithm: TotpAlgorithm) -> &'static str {
+    match algorithm {
+        TotpAlgorithm::SHA1 => "SHA1",
+        TotpAlgorithm::SHA256 => "SHA256",
+        TotpAlgorithm::SHA512 => "SHA512",
+    }
 }
 
 fn unix_seconds_now() -> u64 {

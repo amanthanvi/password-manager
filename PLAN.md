@@ -103,4 +103,6 @@ These become authoritative once scaffolded in Step 1:
 - [x] M3 complete: CLI `vault init/check/unlock/status`, `config get/set/list`, and `generate` (charset+diceware baseline) implemented with config + storage plumbing.
 - [x] M4 complete: N-API addon exposes vault APIs, Electron IPC allowlist is wired, preload bridge is in place, and renderer flow calls native methods.
 - [x] M5 complete: security audit + SBOM workflows added, audit/SBOM commands wired, and user/contributor/security docs added.
-- [ ] M6 in progress: final validation pass and delivery summary.
+- [x] M6 slice complete: strict payload schemas, encrypted search index rebuild/query, item CRUD/search commands, lock-protected writes, encrypted backups + compaction, and vault re-encryption path for item updates.
+- [x] M6 slice complete: RFC 6238 TOTP core with SHA1/SHA256/SHA512 + `--at` deterministic output, `otpauth://` parsing, and CLI `npw totp`.
+- [ ] M6 in progress: remaining CLI parity (`recover`, import/export, migrations, password change/backup helpers, passkey commands) and structured audit logging.

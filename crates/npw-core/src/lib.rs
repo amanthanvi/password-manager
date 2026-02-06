@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub mod model;
+pub mod totp;
 pub mod vault;
 
 pub const APP_NAME: &str = "npw";
@@ -25,6 +26,9 @@ pub use model::{
     AppMetadata, ItemTypeFilter, LoginItem, ModelError, NoteItem, PasskeyRefItem, SearchDoc,
     SearchIndex, Tombstone, TotpAlgorithm, TotpConfig, UrlEntry, UrlMatchType, VaultItem,
     VaultPayload,
+};
+pub use totp::{
+    TotpError, decode_base32_secret, generate_totp, generate_totp_now, parse_otpauth_uri,
 };
 pub use vault::{
     CreateVaultInput, EnvelopePlaintext, KdfParams, ReencryptVaultInput, UnlockedVault, VaultError,
