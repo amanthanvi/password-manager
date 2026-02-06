@@ -22,6 +22,42 @@ type VaultStatus = {
   kdfParallelism: number
 }
 
+type SecurityConfig = {
+  clipboardTimeoutSeconds: number
+  autoLockMinutes: number
+  lockOnSuspend: boolean
+  revealRequiresConfirm: boolean
+}
+
+type GeneratorConfig = {
+  defaultMode: string
+  charsetLength: number
+  charsetUppercase: boolean
+  charsetLowercase: boolean
+  charsetDigits: boolean
+  charsetSymbols: boolean
+  charsetAvoidAmbiguous: boolean
+  dicewareWords: number
+  dicewareSeparator: string
+}
+
+type LoggingConfig = {
+  level: string
+}
+
+type BackupConfig = {
+  maxRetained: number
+}
+
+type AppConfig = {
+  configPath: string
+  defaultVault: string | null
+  security: SecurityConfig
+  generator: GeneratorConfig
+  logging: LoggingConfig
+  backup: BackupConfig
+}
+
 type RecentVault = {
   path: string
   label: string
@@ -120,6 +156,8 @@ type VaultSession = {
 
 type AddonApi = {
   coreBanner: () => string
+  configLoad: () => AppConfig
+  configSet: (key: string, value: string) => AppConfig
   vaultCreate: (path: string, masterPassword: string, vaultLabel?: string | null) => void
   vaultStatus: (path: string) => VaultStatus
   vaultCheck: (path: string, masterPassword: string) => VaultStatus
@@ -173,6 +211,12 @@ function registerIpcHandlers(api: AddonApi) {
   let autoLockTimer: NodeJS.Timeout | null = null
 
   ipcMain.handle('core.banner', () => api.coreBanner())
+  ipcMain.handle('config.load', () => api.configLoad())
+  ipcMain.handle('config.set', (_event, payload: { key: string; value: string }) => {
+    const safeKey = validateText(payload.key, 'key', 128)
+    const safeValue = validateText(payload.value, 'value', 4096)
+    return api.configSet(safeKey, safeValue)
+  })
   ipcMain.handle('app.activity', () => {
     resetAutoLockTimer()
     return true

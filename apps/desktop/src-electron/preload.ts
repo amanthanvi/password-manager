@@ -9,6 +9,42 @@ type VaultStatus = {
   kdfParallelism: number
 }
 
+type SecurityConfig = {
+  clipboardTimeoutSeconds: number
+  autoLockMinutes: number
+  lockOnSuspend: boolean
+  revealRequiresConfirm: boolean
+}
+
+type GeneratorConfig = {
+  defaultMode: string
+  charsetLength: number
+  charsetUppercase: boolean
+  charsetLowercase: boolean
+  charsetDigits: boolean
+  charsetSymbols: boolean
+  charsetAvoidAmbiguous: boolean
+  dicewareWords: number
+  dicewareSeparator: string
+}
+
+type LoggingConfig = {
+  level: string
+}
+
+type BackupConfig = {
+  maxRetained: number
+}
+
+type AppConfig = {
+  configPath: string
+  defaultVault: string | null
+  security: SecurityConfig
+  generator: GeneratorConfig
+  logging: LoggingConfig
+  backup: BackupConfig
+}
+
 type RecentVault = {
   path: string
   label: string
@@ -92,6 +128,8 @@ type AddLoginInput = {
 
 contextBridge.exposeInMainWorld('npw', {
   coreBanner: (): Promise<string> => ipcRenderer.invoke('core.banner'),
+  configLoad: (): Promise<AppConfig> => ipcRenderer.invoke('config.load'),
+  configSet: (payload: { key: string; value: string }): Promise<AppConfig> => ipcRenderer.invoke('config.set', payload),
   appActivity: (): Promise<boolean> => ipcRenderer.invoke('app.activity'),
   onVaultLocked: (callback: (payload: { reason: string }) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { reason: string }) => {
