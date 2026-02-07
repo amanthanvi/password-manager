@@ -22,6 +22,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 23
+          package-manager-cache: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -59,6 +60,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 23
+          package-manager-cache: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -93,6 +95,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 23
+          package-manager-cache: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -125,6 +128,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 23
+          package-manager-cache: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
