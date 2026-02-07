@@ -212,8 +212,26 @@
     return normalized.length > 0 ? normalized : [{ url: '', matchType: 'exact' }]
   }
 
+  const getBridge = () => {
+    if (npw) {
+      return npw
+    }
+    if (typeof window === 'undefined') {
+      return null
+    }
+    const bridge = window['npw'] ?? null
+    if (bridge) {
+      npw = bridge
+    }
+    return bridge
+  }
+
   onMount(async () => {
-    npw = typeof window !== 'undefined' ? window['npw'] : null
+    npw = getBridge()
+    if (!npw) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      npw = getBridge()
+    }
 
     bridgeAvailable =
       typeof window !== 'undefined' &&
@@ -654,8 +672,13 @@
 
   const refreshConfig = async () => {
     settingsError = ''
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.configLoad !== 'function') {
+      settingsError = 'Desktop bridge unavailable'
+      return
+    }
     try {
-      appConfig = await npw.configLoad()
+      appConfig = await bridge.configLoad()
       if (appConfig?.security) {
         settingsClipboardTimeoutSeconds = appConfig.security.clipboardTimeoutSeconds
         settingsAutoLockMinutes = appConfig.security.autoLockMinutes
@@ -680,24 +703,31 @@
   const saveSettings = async () => {
     settingsSaving = true
     settingsError = ''
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.configSet !== 'function') {
+      settingsError = 'Desktop bridge unavailable'
+      pushToast({ kind: 'error', title: 'Save settings failed', detail: settingsError })
+      settingsSaving = false
+      return
+    }
     try {
-      appConfig = await npw.configSet({
+      appConfig = await bridge.configSet({
         key: 'security.clipboard_timeout_seconds',
         value: String(Number(settingsClipboardTimeoutSeconds))
       })
-      appConfig = await npw.configSet({
+      appConfig = await bridge.configSet({
         key: 'security.auto_lock_minutes',
         value: String(Number(settingsAutoLockMinutes))
       })
-      appConfig = await npw.configSet({
+      appConfig = await bridge.configSet({
         key: 'security.lock_on_suspend',
         value: String(Boolean(settingsLockOnSuspend))
       })
-      appConfig = await npw.configSet({
+      appConfig = await bridge.configSet({
         key: 'security.reveal_requires_confirm',
         value: String(Boolean(settingsRevealRequiresConfirm))
       })
-      appConfig = await npw.configSet({
+      appConfig = await bridge.configSet({
         key: 'logging.level',
         value: String(settingsLogLevel)
       })
@@ -765,7 +795,8 @@
   }
 
   const pickCreateVault = async () => {
-    if (!bridgeAvailable) {
+    const bridge = getBridge()
+    if (!bridgeAvailable || !bridge || typeof bridge.vaultDialogCreate !== 'function') {
       pushToast({
         kind: 'error',
         title: 'Desktop bridge unavailable',
@@ -774,7 +805,7 @@
       return
     }
     try {
-      const picked = await npw.vaultDialogCreate()
+      const picked = await bridge.vaultDialogCreate()
       if (!picked) {
         return
       }

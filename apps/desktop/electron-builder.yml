@@ -4,6 +4,7 @@ artifactName: npw-desktop-${version}-${os}-${arch}.${ext}
 
 directories:
   output: dist-packages
+  buildResources: build
 
 files:
   - dist/**/*
@@ -18,14 +19,17 @@ asarUnpack:
 npmRebuild: false
 
 mac:
+  icon: icon.icns
   target:
     - dmg
 
 win:
+  icon: icon.ico
   target:
     - nsis
 
 linux:
+  icon: icon.png
   target:
     - AppImage
     - deb

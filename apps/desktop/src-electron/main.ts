@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, powerMonitor, shell } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -9,6 +9,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 const isE2E = process.env.NPW_E2E === '1' || process.argv.includes('--npw-e2e')
 const require = createRequire(import.meta.url)
+
+const APP_NAME = 'npw'
+const APP_ID = 'com.npw.passwordmanager'
 
 const DEFAULT_CLIPBOARD_CLEAR_SECONDS = 30
 const MAX_RECENT_VAULTS = 10
@@ -89,6 +92,12 @@ type ItemSummary = {
   hasTotp: boolean
   updatedAt: number
   tags: string[]
+}
+
+const getAppIcon = () => {
+  const iconPath = isDev ? path.join(__dirname, '../public/icon.png') : path.join(__dirname, '../dist/icon.png')
+  const image = nativeImage.createFromPath(iconPath)
+  return image.isEmpty() ? undefined : image
 }
 
 type UrlEntry = {
@@ -294,12 +303,23 @@ const createWindow = () => {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    minWidth: 980,
+    minHeight: 680,
+    show: false,
+    title: APP_NAME,
+    backgroundColor: '#f7f6ef',
+    autoHideMenuBar: process.platform !== 'darwin',
+    icon: getAppIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
     }
+  })
+
+  win.once('ready-to-show', () => {
+    win.show()
   })
 
   if (!isDev || isE2E) {
@@ -315,6 +335,12 @@ const createWindow = () => {
 }
 
 app.whenReady().then(() => {
+  app.setName(APP_NAME)
+  process.title = APP_NAME
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(APP_ID)
+  }
+
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
