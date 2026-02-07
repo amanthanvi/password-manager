@@ -1713,7 +1713,7 @@
 
 <main class="app">
   {#if toasts.length > 0}
-    <div class="toast-host" aria-live="polite">
+    <div class="toast-host" aria-live="polite" role="status">
       {#each toasts as toast (toast.id)}
         <div class="toast" data-kind={toast.kind}>
           <div class="toast-header">
@@ -1819,7 +1819,7 @@
 	        bind:value={masterPassword}
 	        type="password"
 	        placeholder="••••••••"
-	        autocomplete="off"
+	        autocomplete="current-password"
 	        spellcheck="false"
 	        on:keydown={(event) => {
 	          if (event.key !== 'Enter' || !bridgeAvailable || status || masterPassword.trim().length === 0) {
@@ -1844,7 +1844,7 @@
 	          Quick Unlock
 	        </button>
 	      {/if}
-	      <button class="secondary" on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
+	      <button class="secondary" type="button" on:click={lockVault} disabled={!bridgeAvailable || !status}>Lock Vault</button>
 	    </div>
 
 	    {#if !status && quickUnlockForPath.error}
@@ -1905,6 +1905,7 @@
       <label class="inline">
         <input type="checkbox" bind:checked={settingsLockOnSuspend} />
         Lock on suspend / lock screen
+        <span class="hint">Auto-lock when OS sleeps or screen locks</span>
       </label>
 
       <label>
@@ -1920,16 +1921,18 @@
       <label class="inline">
         <input type="checkbox" bind:checked={settingsRevealRequiresConfirm} />
         Reveal requires confirmation
+        <span class="hint">Prompt before showing a password in plaintext</span>
       </label>
 
       <label>
         Log level
-        <select bind:value={settingsLogLevel}>
+        <select bind:value={settingsLogLevel} aria-label="Log level">
           <option value="error">error</option>
           <option value="warn">warn</option>
           <option value="info">info</option>
           <option value="debug">debug</option>
         </select>
+        <span class="hint">Verbosity for the desktop log file</span>
       </label>
 
       {#if settingsError}
@@ -1977,10 +1980,10 @@
 	                <h2>Items</h2>
 	                <button class="ghost" type="button" on:click={refreshItems} disabled={!status}>Refresh</button>
 	              </div>
-	              <div class="filters">
+	              <div class="filters" role="search" aria-label="Filter items">
 	                <label>
 	                  Type
-	                  <select bind:value={filterType}>
+	                  <select bind:value={filterType} aria-label="Filter by item type">
                     <option value="all">All</option>
                     <option value="login">Logins</option>
                     <option value="note">Notes</option>
@@ -1993,7 +1996,7 @@
                 </label>
                 <label>
                   Tag
-                  <input bind:value={filterTag} list="tag-suggestions" placeholder="work" />
+                  <input bind:value={filterTag} list="tag-suggestions" placeholder="work" aria-label="Filter by tag" />
                 </label>
                 <datalist id="tag-suggestions">
                   {#each availableTags as tag (tag)}
@@ -2005,10 +2008,10 @@
               {#if itemsView.length === 0}
                 <p class="muted">No items found.</p>
               {:else}
-                <ul class="item-list">
+                <ul class="item-list" aria-label="Vault items">
                   {#each itemsView as item (item.id)}
                     <li class:selected={selectedItem?.id === item.id}>
-                      <button class="row" type="button" on:click={() => selectItem(item)}>
+                      <button class="row" type="button" on:click={() => selectItem(item)} aria-current={selectedItem?.id === item.id ? 'true' : undefined}>
                         <strong>{item.title}</strong>
                         <span class="meta">
                           <span class="type-badge" data-type={item.itemType}>
@@ -2164,11 +2167,17 @@
                 <p class="callout">{importError}</p>
               {/if}
 
+              <p class="muted">
+                {importPreview.candidates - Object.values(importDecisions).filter(d => d === 'skip').length} items will be imported
+                ({Object.values(importDecisions).filter(d => d === 'skip').length} skipped,
+                {Object.values(importDecisions).filter(d => d === 'overwrite').length} overwritten).
+              </p>
+
               <div class="actions">
                 <button type="button" on:click={applyImport} disabled={importBusy}>
                   {importBusy ? 'Importing…' : 'Apply Import'}
                 </button>
-                <button class="secondary" type="button" on:click={clearImportState} disabled={importBusy}>Clear Preview</button>
+                <button class="secondary" type="button" on:click={clearImportState} disabled={importBusy}>Cancel</button>
               </div>
             </div>
           {/if}
@@ -2181,10 +2190,13 @@
           </p>
           <div class="actions">
             <button type="button" on:click={() => exportCsv({ includeSecrets: false })}>Export CSV (redacted)…</button>
-            <button type="button" on:click={() => exportCsv({ includeSecrets: true })}>Export CSV (plaintext)…</button>
             <button type="button" on:click={() => exportJson({ includeSecrets: false })}>Export JSON (redacted)…</button>
-            <button type="button" on:click={() => exportJson({ includeSecrets: true })}>Export JSON (plaintext)…</button>
             <button type="button" on:click={openEncryptedExport}>Encrypted Export…</button>
+          </div>
+          <p class="muted">Plaintext exports include passwords and note bodies in cleartext.</p>
+          <div class="actions">
+            <button class="secondary" type="button" on:click={() => exportCsv({ includeSecrets: true })}>Export CSV (plaintext)…</button>
+            <button class="secondary" type="button" on:click={() => exportJson({ includeSecrets: true })}>Export JSON (plaintext)…</button>
           </div>
         </div>
       </div>
@@ -2284,7 +2296,7 @@
         Favorite
       </label>
       <div class="actions">
-        <button on:click={addNote} disabled={newNoteTitle.trim().length === 0}>Save Note</button>
+        <button type="button" on:click={addNote} disabled={newNoteTitle.trim().length === 0}>Save Note</button>
       </div>
       </div>
     </details>
@@ -2335,6 +2347,7 @@
       {/if}
       <div class="actions">
         <button
+          type="button"
           on:click={addPasskeyRef}
           disabled={
             newPasskeyBusy ||
@@ -2376,7 +2389,7 @@
           <button type="button" on:click={updateLogin} disabled={loginEditBusy || loginEditTitle.trim().length === 0}>
             {loginEditBusy ? 'Saving…' : 'Save'}
           </button>
-          <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+          <button class="destructive" type="button" on:click={deleteSelectedItem}>Delete</button>
         </div>
       </div>
 
@@ -2389,7 +2402,7 @@
         Username
         <div class="inline">
           <input bind:value={loginEditUsername} disabled={loginEditBusy} />
-          <button on:click={copyUsername} disabled={!loginDetail.username}>Copy</button>
+          <button type="button" on:click={copyUsername} disabled={!loginDetail.username}>Copy</button>
         </div>
       </label>
 
@@ -2403,7 +2416,7 @@
               {loginDetail.hasPassword ? '••••••••' : '(none)'}
             {/if}
           </span>
-          <button on:click={copyPassword} disabled={!loginDetail.hasPassword}>Copy</button>
+          <button type="button" on:click={copyPassword} disabled={!loginDetail.hasPassword}>Copy</button>
           {#if loginDetail.hasPassword}
             {#if revealedPassword != null}
               <button class="secondary" type="button" on:click={hidePassword}>Hide</button>
@@ -2422,8 +2435,8 @@
             <div class="inline">
               <span class="totp">{totp.code}</span>
               <span class="totp-remaining" class:low={totp.remaining <= 5}>{totp.remaining}s</span>
-              <button on:click={copyTotp}>Copy</button>
-              <button on:click={toggleTotpQr}>{totpQrVisible ? 'Hide QR' : 'Export QR'}</button>
+              <button type="button" on:click={copyTotp}>Copy</button>
+              <button type="button" on:click={toggleTotpQr}>{totpQrVisible ? 'Hide QR' : 'Export QR'}</button>
             </div>
             {#if totpQrVisible && totpQrUrl}
               <div class="qr">
@@ -2510,7 +2523,7 @@
           <button type="button" on:click={updateNote} disabled={noteEditBusy || noteEditTitle.trim().length === 0}>
             {noteEditBusy ? 'Saving…' : 'Save'}
           </button>
-          <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+          <button class="destructive" type="button" on:click={deleteSelectedItem}>Delete</button>
         </div>
       </div>
 
@@ -2555,9 +2568,9 @@
           >
             {passkeyEditBusy ? 'Saving…' : 'Save'}
           </button>
-          <button class="secondary" on:click={openPasskeySite}>Open Site</button>
-          <button class="secondary" on:click={openPasskeyManager}>Open Passkey Manager</button>
-          <button class="destructive" on:click={deleteSelectedItem}>Delete</button>
+          <button class="secondary" type="button" on:click={openPasskeySite}>Open Site</button>
+          <button class="secondary" type="button" on:click={openPasskeyManager}>Open Passkey Manager</button>
+          <button class="destructive" type="button" on:click={deleteSelectedItem}>Delete</button>
         </div>
       </div>
       <p class="callout">This app does not store passkeys. This is a reference entry.</p>
@@ -2618,8 +2631,9 @@
   </div>
 
   {#if totpImportVisible}
-    <div class="modal-backdrop">
-      <dialog class="modal" open aria-labelledby="totp-import-title">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal-backdrop" on:keydown={(e) => { if (e.key === 'Escape' && !totpImportBusy) closeTotpImport() }}>
+      <dialog class="modal" open aria-labelledby="totp-import-title" aria-modal="true">
         <h2 id="totp-import-title">Import TOTP</h2>
         <p class="muted">
           Scan a QR code or paste an <span class="mono">otpauth://</span> URI or base32 secret. Camera access is used
@@ -2672,8 +2686,9 @@
   {/if}
 
   {#if encryptedExportVisible}
-    <div class="modal-backdrop">
-      <dialog class="modal" open aria-labelledby="encrypted-export-title">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal-backdrop" on:keydown={(e) => { if (e.key === 'Escape' && !encryptedExportBusy) closeEncryptedExport() }}>
+      <dialog class="modal" open aria-labelledby="encrypted-export-title" aria-modal="true">
         <h2 id="encrypted-export-title">Encrypted Export</h2>
         <p class="muted">
           Writes a portable <span class="mono">.npw</span> export protected by a new export password. The export password
@@ -2685,17 +2700,18 @@
 
         <label>
           Export password
-          <input type="password" bind:value={encryptedExportPassword} disabled={encryptedExportBusy} />
+          <input type="password" bind:value={encryptedExportPassword} disabled={encryptedExportBusy} autocomplete="new-password" />
         </label>
 
         <label>
           Confirm export password
-          <input type="password" bind:value={encryptedExportPasswordConfirm} disabled={encryptedExportBusy} />
+          <input type="password" bind:value={encryptedExportPasswordConfirm} disabled={encryptedExportBusy} autocomplete="new-password" />
         </label>
 
         <label>
           Master password (verification)
-          <input type="password" bind:value={encryptedExportMasterPassword} disabled={encryptedExportBusy} />
+          <input type="password" bind:value={encryptedExportMasterPassword} disabled={encryptedExportBusy} autocomplete="current-password" />
+          <span class="hint">Required to verify you own this vault</span>
         </label>
 
         <label class="inline">
@@ -2720,18 +2736,22 @@
   {/if}
 
   {#if recoveryVisible}
-    <div class="modal-backdrop">
-      <dialog class="modal" open aria-labelledby="recovery-title">
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal-backdrop" on:keydown={(e) => { if (e.key === 'Escape' && !recoveryBusy) closeRecoveryWizard() }}>
+      <dialog class="modal" open aria-labelledby="recovery-title" aria-modal="true">
         <h2 id="recovery-title">Recovery Wizard</h2>
         <p class="muted">
           Restore an encrypted backup to recover from a corrupted vault file. Restoring will overwrite the vault file and
           preserve the current file as <span class="mono">.corrupt</span>.
         </p>
+        <p class="muted">
+          Select a backup below, then enter your master password. The password is used to verify the backup before restoring.
+        </p>
 
         {#if recoveryBackups.length === 0}
-          <p class="muted">No backups found.</p>
+          <p class="muted">No backups found for <span class="mono">{recoveryVaultPath}</span>.</p>
         {:else}
-          <div class="backup-list" role="list">
+          <div class="backup-list" role="list" aria-label="Available backups">
             {#each recoveryBackups as backup (backup.path)}
               <label class="backup-row" role="listitem">
                 <input
