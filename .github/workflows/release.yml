@@ -151,4 +151,3 @@ jobs:
           tag_name: ${{ github.event.release.tag_name || inputs.tag }}
           files: |
             dist/release/**/*
-            dist/release/SHA256SUMS.txt
