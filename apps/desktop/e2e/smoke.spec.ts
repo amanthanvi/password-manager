@@ -18,10 +18,24 @@ test('smoke: create + unlock + add login + search + import/copy TOTP', async () 
     cwd: path.resolve(here, '..'),
     env: {
       ...process.env,
-      NPW_E2E: '1'
+      NPW_E2E: '1',
+      NPW_E2E_VAULT_DIALOG_CREATE_PATH: vaultPath
     }
   })
   const page = await app.firstWindow()
+
+  await page.waitForLoadState('domcontentloaded')
+
+  const configPath = await page.evaluate(async () => {
+    // Intentionally call through the exposed API without optional chaining to catch bridge issues.
+    // @ts-expect-error `window.npw` is injected by the Electron preload bridge at runtime.
+    const config = await window.npw.configLoad()
+    return config?.configPath ?? null
+  })
+  expect(configPath).toBeTruthy()
+
+  await page.getByRole('button', { name: 'Create New Vault…' }).click()
+  await expect(page.getByLabel('Vault path')).toHaveValue(vaultPath)
 
   await page.getByLabel('Vault path').fill(vaultPath)
   await page.getByLabel('Vault label').fill('E2E')

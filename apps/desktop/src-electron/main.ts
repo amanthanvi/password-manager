@@ -425,6 +425,10 @@ function registerIpcHandlers(api: AddonApi) {
   })
 
   ipcMain.handle('vault.dialog.open', async () => {
+    if (isE2E) {
+      const override = process.env.NPW_E2E_VAULT_DIALOG_OPEN_PATH?.trim()
+      return override && override.length > 0 ? override : null
+    }
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
       filters: [{ name: 'npw Vault', extensions: ['npw'] }]
@@ -436,6 +440,10 @@ function registerIpcHandlers(api: AddonApi) {
   })
 
   ipcMain.handle('vault.dialog.create', async () => {
+    if (isE2E) {
+      const override = process.env.NPW_E2E_VAULT_DIALOG_CREATE_PATH?.trim()
+      return override && override.length > 0 ? ensureNpwExtension(override) : null
+    }
     const result = await dialog.showSaveDialog({
       defaultPath: 'vault.npw',
       filters: [{ name: 'npw Vault', extensions: ['npw'] }]
