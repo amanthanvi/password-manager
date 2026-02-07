@@ -1,6 +1,6 @@
 # `npw` — v0.1.0 Implementation Specification (SPEC.md)
 
-**Status:** Draft for implementation and security review
+**Status:** Implemented (v0.1.0)
 **Audience:** Maintainers, contributors, implementers, security reviewers
 **Normative language:** The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** are to be interpreted as described in **RFC 2119** and **RFC 8174**.
 

@@ -1,6 +1,6 @@
 # `npw` v0.1.0 Execution Plan (`PLAN.md`)
 
-Status: Complete
+Status: Ready to tag `v0.1.0`
 Owner: Codex (execution agent)
 Branch: `main`
 Source spec: `SPEC.md`
@@ -133,6 +133,7 @@ These become authoritative once scaffolded in Step 1:
 - [x] M9 slice complete: desktop import/export screen with CSV + Bitwarden JSON preview/apply (duplicate resolution) and CSV/JSON/encrypted exports via OS dialogs.
 - [x] M9 slice complete: desktop OS keychain Quick Unlock (opt-in per vault; explicit warning + confirmation; disable deletes keychain entry).
 - [x] M12 complete: final verification (SPEC O2 proptests; `pnpm run check`, `pnpm run build`, `pnpm run audit` all green on `main`).
+- [x] FOSS readiness: Apache-2.0 licensing and repo metadata (LICENSE + README + manifests) and desktop app identity polish (icon + window/process name).
 
 ## 6. Remaining v0.1.0 Blockers (MUST)
 
