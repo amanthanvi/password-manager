@@ -83,7 +83,7 @@ jobs:
         if: matrix.cli_archive == 'tar.gz'
         shell: bash
         run: |
-          VERSION="$(node -e \"console.log(require('./package.json').version)\")"
+          VERSION="$(node -p "require('./package.json').version")"
           ARCHIVE="npw-cli-${VERSION}-${{ matrix.os_id }}-${{ matrix.arch }}.tar.gz"
           tar -C target/release -czf "$ARCHIVE" npw
 
