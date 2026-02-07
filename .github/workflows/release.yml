@@ -66,10 +66,10 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name || inputs.tag }}"
           VERSION="${TAG#v}"
-          ROOT_VERSION="$(node -e \"console.log(require('./package.json').version)\")"
-          DESKTOP_VERSION="$(node -e \"console.log(require('./apps/desktop/package.json').version)\")"
-          if [ \"$VERSION\" != \"$ROOT_VERSION\" ] || [ \"$VERSION\" != \"$DESKTOP_VERSION\" ]; then
-            echo \"Tag version ($VERSION) must match package.json versions ($ROOT_VERSION, $DESKTOP_VERSION).\" >&2
+          ROOT_VERSION="$(node -p "require('./package.json').version")"
+          DESKTOP_VERSION="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$VERSION" != "$ROOT_VERSION" ] || [ "$VERSION" != "$DESKTOP_VERSION" ]; then
+            echo "Tag version ($VERSION) must match package.json versions ($ROOT_VERSION, $DESKTOP_VERSION)." >&2
             exit 1
           fi
 
