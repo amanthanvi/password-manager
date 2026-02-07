@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(not(windows))]
 use fs2::FileExt;
 use thiserror::Error;
 
@@ -109,20 +110,47 @@ pub fn acquire_vault_lock(path: &Path) -> Result<VaultLock, StorageError> {
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let lock_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock_path)?;
-    match lock_file.try_lock_exclusive() {
-        Ok(()) => Ok(VaultLock {
-            vault_path: path.to_path_buf(),
-            _lock_file: lock_file,
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(StorageError::Locked),
-        Err(error) => Err(StorageError::Io(error)),
+
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0);
     }
+
+    let lock_file = match options.open(&lock_path) {
+        Ok(file) => file,
+        Err(error) => {
+            #[cfg(windows)]
+            {
+                // Share/lock violations mean another process holds the lock file open.
+                if matches!(error.raw_os_error(), Some(32 | 33)) {
+                    return Err(StorageError::Locked);
+                }
+            }
+            return Err(StorageError::Io(error));
+        }
+    };
+
+    #[cfg(not(windows))]
+    match lock_file.try_lock_exclusive() {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            return Err(StorageError::Locked);
+        }
+        Err(error) => {
+            return Err(StorageError::Io(error));
+        }
+    }
+
+    // On Windows, `share_mode(0)` provides the mutual exclusion we need across processes.
+    // On other platforms, we rely on `try_lock_exclusive` above.
+    Ok(VaultLock {
+        vault_path: path.to_path_buf(),
+        _lock_file: lock_file,
+    })
 }
 
 fn lock_file_path(path: &Path) -> PathBuf {
