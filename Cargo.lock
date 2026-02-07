@@ -1242,6 +1242,7 @@ dependencies = [
  "getrandom 0.3.4",
  "keyring",
  "napi",
+ "napi-build",
  "napi-derive",
  "npw-core",
  "npw-storage",

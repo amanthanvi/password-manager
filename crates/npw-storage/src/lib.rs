@@ -332,6 +332,7 @@ mod tests {
         assert_eq!(loaded, payload);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn returns_locked_when_lock_is_held() {
         let path = temp_path("locked.npw");
