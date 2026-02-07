@@ -2,6 +2,11 @@ name: SBOM
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload SBOMs to (e.g. v0.1.0)
+        required: true
+        default: v0.1.0
   release:
     types: [published]
 
@@ -14,12 +19,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
           node-version: 23
-          cache: pnpm
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -60,11 +66,13 @@ jobs:
           path: |
             **/sbom-rust.json
             sbom-npm.cdx.json
+            sbom-rust.zip
 
       - name: Upload SBOMs to GitHub release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
           files: |
             sbom-rust.zip
             sbom-npm.cdx.json
