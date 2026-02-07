@@ -1815,12 +1815,25 @@
 
 	    <label>
 	      Master password
-	      <input bind:value={masterPassword} type="password" placeholder="••••••••" autocomplete="off" spellcheck="false" />
+	      <input
+	        bind:value={masterPassword}
+	        type="password"
+	        placeholder="••••••••"
+	        autocomplete="off"
+	        spellcheck="false"
+	        on:keydown={(event) => {
+	          if (event.key !== 'Enter' || !bridgeAvailable || status || masterPassword.trim().length === 0) {
+	            return
+	          }
+	          event.preventDefault()
+	          void unlockVault()
+	        }}
+	      />
 	    </label>
 
 	    <div class="actions">
-	      <button on:click={createVault} disabled={!bridgeAvailable}>Create Vault</button>
-	      <button on:click={unlockVault} disabled={!bridgeAvailable}>Unlock Vault</button>
+	      <button type="button" on:click={createVault} disabled={!bridgeAvailable}>Create Vault</button>
+	      <button type="button" on:click={unlockVault} disabled={!bridgeAvailable}>Unlock Vault</button>
 	      {#if !status && quickUnlockForPath.configured}
 	        <button
 	          class="secondary"
@@ -2242,7 +2255,7 @@
         Favorite
       </label>
       <div class="actions">
-        <button on:click={addLogin} disabled={newLoginTitle.trim().length === 0}>Save Login</button>
+        <button type="button" on:click={addLogin} disabled={newLoginTitle.trim().length === 0}>Save Login</button>
       </div>
     </section>
   {/if}
@@ -2383,7 +2396,7 @@
       <div class="field">
         <div class="label">Password</div>
         <div class="inline">
-          <span class:mono={revealedPassword != null}>
+          <span class="password-display" class:revealed={revealedPassword != null}>
             {#if revealedPassword != null}
               {revealedPassword}
             {:else}
@@ -2408,7 +2421,7 @@
           {#if totp}
             <div class="inline">
               <span class="totp">{totp.code}</span>
-              <span class="muted">{totp.remaining}s</span>
+              <span class="totp-remaining" class:low={totp.remaining <= 5}>{totp.remaining}s</span>
               <button on:click={copyTotp}>Copy</button>
               <button on:click={toggleTotpQr}>{totpQrVisible ? 'Hide QR' : 'Export QR'}</button>
             </div>
@@ -2967,12 +2980,12 @@
   .fold > summary::after {
     content: '>';
     color: var(--ink-3);
-    transform: rotate(-90deg);
+    transform: rotate(0deg);
     transition: transform 140ms ease, color 140ms ease;
   }
 
   .fold[open] > summary::after {
-    transform: rotate(0deg);
+    transform: rotate(90deg);
     color: var(--ink-2);
   }
 
@@ -3646,6 +3659,20 @@
     margin: 0;
   }
 
+  .empty-state-icon {
+    display: block;
+    font-size: 2.25rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.6;
+  }
+
+  .picker-empty-icon {
+    display: block;
+    font-size: 1.75rem;
+    margin-bottom: 0.35rem;
+    opacity: 0.55;
+  }
+
   .locked-card {
     min-height: 14rem;
     border-style: solid;
@@ -3724,9 +3751,40 @@
     flex-wrap: wrap;
   }
 
+  .password-display {
+    color: var(--ink-3);
+    padding: 0.25rem 0;
+  }
+
+  .password-display.revealed {
+    font-family: var(--font-mono);
+    background: rgba(11, 27, 38, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.3rem 0.55rem;
+    font-size: 0.9rem;
+    color: var(--ink);
+    user-select: all;
+  }
+
   .totp {
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.08em;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .totp-remaining {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+    transition: color 200ms ease;
+  }
+
+  .totp-remaining.low {
+    color: var(--danger);
+    font-weight: 650;
   }
 
   .qr {
