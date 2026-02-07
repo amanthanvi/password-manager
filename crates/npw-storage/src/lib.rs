@@ -286,12 +286,12 @@ fn unique_suffix() -> u128 {
     (u128::from(std::process::id()) << 64) | nanos
 }
 
-fn set_secure_permissions(path: &Path) -> Result<(), StorageError> {
+fn set_secure_permissions(_path: &Path) -> Result<(), StorageError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o600))?;
     }
 
     Ok(())

@@ -28,7 +28,8 @@ test('smoke: create + unlock + add login + search + import/copy TOTP', async () 
   await page.getByLabel('Master password').fill(masterPassword)
 
   await page.getByRole('button', { name: 'Create Vault' }).click()
-  await expect(page.locator('pre.result')).toContainText('Created vault at')
+  // `lastResult` is only rendered once a session exists; use the toast for pre-unlock assertions.
+  await expect(page.locator('.toast-host')).toContainText('Created vault at')
 
   // Unlock clears the master password field on success, so re-fill before clicking.
   await page.getByLabel('Master password').fill(masterPassword)
