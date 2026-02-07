@@ -309,9 +309,11 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    #[cfg(not(windows))]
+    use super::{StorageError, lock_file_path};
     use super::{
-        StorageError, acquire_vault_lock, backup_directory, compact_backups, list_backups,
-        lock_file_path, parse_backup_timestamp, read_vault, recover_from_backup, write_vault,
+        acquire_vault_lock, backup_directory, compact_backups, list_backups,
+        parse_backup_timestamp, read_vault, recover_from_backup, write_vault,
         write_vault_with_lock,
     };
 
