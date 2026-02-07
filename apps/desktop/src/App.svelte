@@ -1771,7 +1771,11 @@
   <section class="picker">
     <h2>Recent Vaults</h2>
     {#if recents.length === 0}
-      <p class="muted">No recent vaults yet.</p>
+      <div class="picker-empty">
+        <span class="picker-empty-icon" aria-hidden="true">&#128274;</span>
+        <p class="muted">No recent vaults yet.</p>
+        <p class="hint">Create or open a vault to get started.</p>
+      </div>
     {:else}
       <ul class="recent-list">
         {#each recents as vault (vault.path)}
@@ -1789,8 +1793,8 @@
       </ul>
     {/if}
     <div class="actions">
-      <button type="button" on:click={pickCreateVault} disabled={!bridgeAvailable}>Create New Vault…</button>
-      <button type="button" on:click={pickOpenVault} disabled={!bridgeAvailable}>Open Existing Vault…</button>
+      <button class="secondary" type="button" on:click={pickCreateVault} disabled={!bridgeAvailable}>Create New Vault…</button>
+      <button class="secondary" type="button" on:click={pickOpenVault} disabled={!bridgeAvailable}>Open Existing Vault…</button>
     </div>
   </section>
 
@@ -1799,17 +1803,19 @@
 
 	    <label>
 	      Vault path
-	      <input bind:value={vaultPath} on:blur={refreshQuickUnlockForPath} />
+	      <input bind:value={vaultPath} on:blur={refreshQuickUnlockForPath} placeholder="/path/to/vault.npw" spellcheck="false" />
+	      <span class="hint">On-disk file for this vault</span>
 	    </label>
 
 	    <label>
 	      Vault label
-	      <input bind:value={vaultLabel} />
+	      <input bind:value={vaultLabel} placeholder="My Vault" />
+	      <span class="hint">Friendly name shown in recents</span>
 	    </label>
 
 	    <label>
 	      Master password
-	      <input bind:value={masterPassword} type="password" />
+	      <input bind:value={masterPassword} type="password" placeholder="••••••••" autocomplete="off" spellcheck="false" />
 	    </label>
 
 	    <div class="actions">
@@ -1874,31 +1880,33 @@
     <section class="settings">
       <h2>Settings</h2>
       {#if appConfig?.configPath}
-        <p class="muted">Config path: <span class="mono">{appConfig.configPath}</span></p>
+        <p class="muted config-path">Config: <span class="mono">{appConfig.configPath}</span></p>
       {/if}
 
       <label>
         Auto-lock minutes
         <input type="number" min="1" max="60" step="1" bind:value={settingsAutoLockMinutes} />
+        <span class="hint">Lock vault after inactivity (1–60)</span>
       </label>
 
-      <label>
-        Lock on suspend / lock screen
+      <label class="inline">
         <input type="checkbox" bind:checked={settingsLockOnSuspend} />
+        Lock on suspend / lock screen
       </label>
 
       <label>
         Clipboard timeout (seconds)
         <input type="number" min="0" max="90" step="1" bind:value={settingsClipboardTimeoutSeconds} />
+        <span class="hint">Auto-clear clipboard; 0 = never</span>
       </label>
 
       {#if Number(settingsClipboardTimeoutSeconds) === 0}
         <p class="callout">Warning: clipboard auto-clear is disabled.</p>
       {/if}
 
-      <label>
-        Reveal requires confirmation
+      <label class="inline">
         <input type="checkbox" bind:checked={settingsRevealRequiresConfirm} />
+        Reveal requires confirmation
       </label>
 
       <label>
@@ -1931,16 +1939,26 @@
       <label class="search">
         <span class="label">Search</span>
         <input
+          type="search"
           bind:value={query}
           on:input={refreshItems}
           disabled={!status}
           placeholder="Search titles, usernames, tags…"
+          spellcheck="false"
         />
       </label>
 
       <div class="workspace-grid">
 	        <div class="workspace-left">
-	          {#if status}
+	          {#if !status}
+	            <div class="empty-state">
+	              <div class="empty-state-inner">
+	                <span class="empty-state-icon" aria-hidden="true">&#128274;</span>
+	                <p>Unlock or create a vault to see items.</p>
+	                <p class="hint">Use the sidebar to open a recent vault or create a new one.</p>
+	              </div>
+	            </div>
+	          {:else}
 	            <section class="items">
 	              <div class="card-head">
 	                <h2>Items</h2>
@@ -2011,6 +2029,16 @@
         </div>
 
         <div class="workspace-right">
+  {#if !status}
+    <div class="empty-state locked-card">
+      <div class="empty-state-inner">
+        <span class="empty-state-icon" aria-hidden="true">&#128272;</span>
+        <p>Vault is locked</p>
+        <p class="hint">Unlock a vault to access items, import/export, and more.</p>
+      </div>
+    </div>
+  {/if}
+
   {#if status}
     <details class="import-export fold">
       <summary>
@@ -2309,15 +2337,16 @@
     </details>
   {/if}
 
-  <pre class="result">{lastResult}</pre>
-
   {#if status}
     <details class="debug fold">
       <summary>
-        <span>Debug status</span>
+        <span>Debug</span>
         <span class="summary-meta">Session snapshot</span>
       </summary>
       <div class="fold-body">
+        {#if lastResult}
+          <pre class="result">{lastResult}</pre>
+        {/if}
         <pre class="note mono">{JSON.stringify(status, null, 2)}</pre>
       </div>
     </details>
@@ -2837,7 +2866,24 @@
   }
 
   .sidebar .settings {
-    margin-top: 0.55rem;
+    margin-top: 0.25rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+  }
+
+  .settings label.inline {
+    padding: 0.25rem 0;
+  }
+
+  label.inline input[type='checkbox'],
+  label.inline input[type='radio'] {
+    width: 1rem;
+    height: 1rem;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
 
   .workspace {
@@ -3566,6 +3612,45 @@
   .muted {
     color: var(--ink-3);
     margin: 0;
+  }
+
+  .hint {
+    font-size: 0.78rem;
+    font-weight: 420;
+    color: var(--ink-3);
+    margin: -0.15rem 0 0;
+  }
+
+  .config-path {
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 10rem;
+    padding: 1.5rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    background: rgba(255, 255, 255, 0.35);
+    color: var(--ink-3);
+    text-align: center;
+    font-size: 0.9rem;
+  }
+
+  .empty-state p {
+    margin: 0;
+  }
+
+  .locked-card {
+    min-height: 14rem;
+    border-style: solid;
+    background: rgba(255, 255, 255, 0.5);
+    animation: panel-in 180ms ease-out;
   }
 
   .detail {
